@@ -1922,18 +1922,7 @@ ${socks_inbound_json}}
         "routing": {
           "domainStrategy": "IPIfNonMatch",
           "rules": [
-            {
-              "type": "field",
-              "ip": ["geoip:private"],
-              "outboundTag": "block"
-            },
-            {
-              "type": "field",
-              "outboundTag": "block",
-              "protocol": [
-                "bittorrent"
-              ]
-            },
+/************
             {
               "type": "field",
               "domain": [],
@@ -1948,6 +1937,19 @@ ${socks_inbound_json}}
               "type": "field",
               "domain": [],
               "outboundTag": "warp_out"
+            },
+*************/
+            {
+              "type": "field",
+              "ip": ["geoip:private"],
+              "outboundTag": "block"
+            },
+            {
+              "type": "field",
+              "outboundTag": "block",
+              "protocol": [
+                "bittorrent"
+              ]
             }
           ]
         }
