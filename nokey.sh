@@ -1872,12 +1872,29 @@ ${socks_inbound_json}}
         "outbounds": [
           {
             "protocol": "freedom",
-            "settings": {
-            },
+            "settings": {},
             "tag": "direct"
           },
           {
-            "tag": "warp-out",
+            "protocol": "freedom",
+            "streamSettings": {
+              "sockopt": {
+                "domainStrategy": "ForceIPv4"
+              }
+            },
+            "tag": "force_ipv4"
+          },
+          {
+            "protocol": "freedom",
+            "streamSettings": {
+              "sockopt": {
+                "domainStrategy": "ForceIPv6"
+              }
+            },
+            "tag": "force_ipv6"
+          },
+          {
+            "tag": "warp_out",
             "protocol": "socks",
             "settings": {
                 "servers": [
@@ -1916,6 +1933,21 @@ ${socks_inbound_json}}
               "protocol": [
                 "bittorrent"
               ]
+            },
+            {
+              "type": "field",
+              "domain": [],
+              "outboundTag": "force_ipv4"
+            },
+            {
+              "type": "field",
+              "domain": [],
+              "outboundTag": "force_ipv6"
+            },
+            {
+              "type": "field",
+              "domain": [],
+              "outboundTag": "warp_out"
             }
           ]
         }
