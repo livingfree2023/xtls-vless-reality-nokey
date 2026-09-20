@@ -31,6 +31,12 @@ hysteria_output="$(bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --dry-run
 [[ "$hysteria_output" == *"Port:"* ]]
 hysteria_acme_output="$(HYSTERIA_CF_TOKEN=test-token bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --dry-run)"
 [[ "$hysteria_acme_output" == *"built-in ACME DNS-01"* ]]
+[[ "$(bash "$REPO_ROOT/hysteria2.sh" --help)" == *"--cert-path=PATH"* ]]
+[[ "$(bash "$REPO_ROOT/hysteria2.sh" --help)" == *"--key-path=PATH"* ]]
+certificate_output="$(bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --cert-path=/tmp/fullchain.pem --key-path=/tmp/private.key --dry-run)"
+[[ "$certificate_output" == *"provided certificate and private key"* ]]
+[[ "$certificate_output" == *"Certificate: /tmp/fullchain.pem"* ]]
+grep -q 'https://get.hy2.sh/' "$REPO_ROOT/hysteria2.sh"
 grep -q 'cloudflare_api_token' "$REPO_ROOT/hysteria2.sh"
 grep -q 'type: dns' "$REPO_ROOT/hysteria2.sh"
 grep -q 'HYSTERIA_CF_TOKEN' "$REPO_ROOT/nokey.sh"

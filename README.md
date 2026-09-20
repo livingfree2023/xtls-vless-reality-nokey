@@ -66,6 +66,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/bbr.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/acme-cert.sh) --domain=example.com
 HYSTERIA_CF_TOKEN=your-cloudflare-token bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com
+# 或使用已有证书和私钥：
+bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com --cert-path=/path/fullchain.pem --key-path=/path/private.key
 ```
 
 这些脚本会自动加载`nokey-common.sh`。需要JSON配置处理的功能会先检查并安装`jq`。

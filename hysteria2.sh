@@ -8,8 +8,7 @@ readonly HYSTERIA_CERT_FILE="/etc/hysteria/fullchain.pem"
 readonly HYSTERIA_KEY_FILE="/etc/hysteria/private.key"
 readonly HYSTERIA_SERVICE_NAME="hysteria2.service"
 readonly HYSTERIA_SERVICE_NAME_ALPINE="hysteria2"
-readonly HYSTERIA_VERSION="v2.9.2"
-readonly HYSTERIA_RELEASE_URL="https://github.com/apernet/hysteria/releases/download/app/${HYSTERIA_VERSION}/hysteria-linux"
+readonly HYSTERIA_INSTALLER_URL="https://get.hy2.sh/"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${script_dir}/nokey-common.sh" ]]; then
@@ -28,8 +27,8 @@ fi
 domain=""
 port=""
 password=""
-cert_path=""
-key_path=""
+cert_path="${HYSTERIA_CERT_PATH:-}"
+key_path="${HYSTERIA_KEY_PATH:-}"
 acme_email=""
 cf_token="${HYSTERIA_CF_TOKEN:-${CF_Token:-}}"
 native_acme=0
@@ -46,7 +45,8 @@ fi
 
 show_help() {
     echo "Usage: hysteria2.sh [--domain=DOMAIN] [--port=PORT] [--password=PASSWORD]"
-    echo "       [--cert=PATH] [--key=PATH] [--email=EMAIL] [--masquerade=URL] [--force] [--remove] [--dry-run]"
+    echo "       [--cert-path=PATH] [--key-path=PATH] [--email=EMAIL] [--masquerade=URL] [--force] [--remove] [--dry-run]"
+    echo "       --cert/--key are accepted as aliases for --cert-path/--key-path."
 }
 
 read_tty_value() {
@@ -66,8 +66,8 @@ parse_args() {
             --domain=*) domain="${arg#*=}" ;;
             --port=*) port="${arg#*=}" ;;
             --password=*) password="${arg#*=}" ;;
-            --cert=*) cert_path="${arg#*=}" ;;
-            --key=*) key_path="${arg#*=}" ;;
+            --cert=*|--cert-path=*) cert_path="${arg#*=}" ;;
+            --key=*|--key-path=*) key_path="${arg#*=}" ;;
             --email=*) acme_email="${arg#*=}" ;;
             --masquerade=*) masquerade_url="${arg#*=}" ;;
             --force) force_reinstall=1 ;;
@@ -210,50 +210,25 @@ yaml_quote() {
     printf '"%s"' "$value"
 }
 
-download_file() {
-    local url="$1"
-    local destination="$2"
-    local temporary="${destination}.tmp"
-    if ! curl -fsSL "$url" -o "$temporary"; then
-        rm -f "$temporary"
-        return 1
-    fi
-    mv "$temporary" "$destination"
-}
-
 install_binary() {
-    local arch=""
-    local url=""
-    local temporary=""
-    arch="$(resolve_arch_name)" || {
-        error "Unsupported architecture: $(uname -m)"
-        return 1
-    }
     if [[ -x "$HYSTERIA_BINARY" && "$force_reinstall" -eq 0 ]]; then
         return 0
     fi
-    temporary="$(mktemp)" || return 1
-    url="${HYSTERIA_RELEASE_URL}-${arch}"
     task_start "下载Hysteria2 / Download Hysteria2"
-    if ! download_file "$url" "$temporary"; then
-        rm -f "$temporary"
+    if ! (
+        set -o pipefail
+        curl -fsSL "$HYSTERIA_INSTALLER_URL" |
+            FORCE_NO_SYSTEMD=2 HYSTERIA_USER=root HYSTERIA_HOME_DIR=/root bash -s --
+    ) >> "$LOG_FILE" 2>&1; then
         task_fail
-        error "下载Hysteria2失败 / Failed to download Hysteria2"
+        error "下载Hysteria2失败 / Failed to install Hysteria2 with the official installer"
         return 1
     fi
-    local expected_sha256=""
-    case "$arch" in
-        amd64) expected_sha256="86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a" ;;
-        arm64) expected_sha256="9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71" ;;
-    esac
-    if ! command -v sha256sum >/dev/null 2>&1 || [[ "$(sha256sum "$temporary" | awk '{print $1}')" != "$expected_sha256" ]]; then
-        rm -f "$temporary"
+    if [[ ! -x "$HYSTERIA_BINARY" ]]; then
         task_fail
-        error "Hysteria2 checksum verification failed / Hysteria2校验和验证失败"
+        error "Hysteria2 binary was not installed by the official installer"
         return 1
     fi
-    install -m 755 "$temporary" "$HYSTERIA_BINARY"
-    rm -f "$temporary"
     task_done
 }
 
@@ -405,7 +380,11 @@ main() {
         info "Binary: $HYSTERIA_BINARY"
         info "Config: $HYSTERIA_CONFIG_FILE"
         info "Port: $port"
-        if [[ -n "$cf_token" ]]; then
+        if [[ -n "$cert_path" || -n "$key_path" ]]; then
+            info "TLS: provided certificate and private key"
+            info "Certificate: $cert_path"
+            info "Private key: $key_path"
+        elif [[ -n "$cf_token" ]]; then
             info "TLS: Hysteria built-in ACME DNS-01 (Cloudflare)"
         else
             info "TLS: detect acme.sh certificate or prompt for certificate paths"

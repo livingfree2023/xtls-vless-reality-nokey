@@ -74,6 +74,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/bbr.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/acme-cert.sh) --domain=example.com
 HYSTERIA_CF_TOKEN=your-cloudflare-token bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com
+# Or use an existing certificate and private key:
+bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com --cert-path=/path/fullchain.pem --key-path=/path/private.key
 ```
 
 Each entrypoint loads `nokey-common.sh`; JSON-based features install `jq` through the detected package manager when it is missing.
