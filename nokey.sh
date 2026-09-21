@@ -2794,6 +2794,7 @@ generate_clash_config() {
   reality-opts:
     public-key: ${public_key}
     short-id: ${shortid}
+    support-x25519mlkem768: true
   uuid: ${uuid}
 EOF
 )
@@ -2823,6 +2824,7 @@ EOF
   reality-opts:
     public-key: ${public_key}
     short-id: ${shortid}
+    support-x25519mlkem768: true
   uuid: ${uuid}
 EOF
 )
@@ -2856,6 +2858,7 @@ generate_ipv6_variants() {
   reality-opts:
     public-key: ${public_key}
     short-id: ${shortid}
+    support-x25519mlkem768: true
   uuid: ${uuid}
 EOF
 )

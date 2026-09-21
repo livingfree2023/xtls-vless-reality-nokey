@@ -427,7 +427,8 @@ if (
     && grep -q "vless://test-uuid@\[2001:db8::10\]:443" "$URL_FILE" \
     && grep -q "#testhost-ipv6" "$URL_FILE" \
     && grep -q -- "- name: testhost-ipv6" "$URL_FILE" \
-    && grep -q "server: 2001:db8::10" "$URL_FILE"
+    && grep -q "server: 2001:db8::10" "$URL_FILE" \
+    && grep -q "support-x25519mlkem768: true" "$URL_FILE"
 ); then
   pass "dual-stack IPv6 variants"
 else
