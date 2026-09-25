@@ -1921,24 +1921,22 @@ ${socks_inbound_json}}
         },
         "routing": {
           "domainStrategy": "IPIfNonMatch",
-          "rules": [
-/************
-            {
-              "type": "field",
-              "domain": [],
-              "outboundTag": "force_ipv4"
-            },
-            {
-              "type": "field",
-              "domain": [],
-              "outboundTag": "force_ipv6"
-            },
-            {
-              "type": "field",
-              "domain": [],
-              "outboundTag": "warp_out"
-            },
-*************/
+//          "rules": [
+//            {
+//              "type": "field",
+//              "domain": ["geosite:"],
+//              "outboundTag": "force_ipv4"
+//            },
+//            {
+//              "type": "field",
+//              "domain": ["geosite:"],
+//              "outboundTag": "force_ipv6"
+//            },
+//            {
+//              "type": "field",
+//              "domain": ["geosite:"],
+//              "outboundTag": "warp_out"
+//            },
             {
               "type": "field",
               "ip": ["geoip:private"],
