@@ -27,6 +27,7 @@ readonly GITHUB_CMD="bash <(curl -fsSL https://raw.githubusercontent.com/livingf
 readonly SERVICE_NAME="xray.service"
 readonly SERVICE_NAME_ALPINE="xray"
 readonly GITHUB_RELEASE_BASE_URL="https://github.com/livingfree2023/nokey/releases/latest/download"
+readonly GITHUB_RELEASE_API_URL="https://api.github.com/repos/livingfree2023/nokey/releases/latest"
 readonly GITHUB_XRAY_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray.rc"
 readonly GITHUB_XRAY_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray.service"
 readonly GITHUB_REALM_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.rc"
@@ -754,6 +755,111 @@ xray_service_is_active() {
     fi
 }
 
+xray_binary_needs_download() {
+    local arch_binary_name="$1"
+    local xray_binary="/usr/local/bin/xray"
+    local current_version=""
+    local release_json=""
+    local latest_tag=""
+    local latest_version=""
+
+    if [[ ! -x "$xray_binary" ]]; then
+        log_info "未找到现有Xray二进制文件，将下载 / Existing Xray binary not found; downloading"
+        return 0
+    fi
+
+    current_version=$("$xray_binary" version 2>/dev/null | awk 'NR == 1 { print $2; exit }')
+    current_version="${current_version#v}"
+    if [[ -z "$current_version" ]]; then
+        log_info "无法读取现有Xray版本，将下载 / Could not read existing Xray version; downloading"
+        return 0
+    fi
+
+    release_json=$(curl -fsSL --max-time 15 "$GITHUB_RELEASE_API_URL" 2>>"$LOG_FILE" || true)
+    latest_tag=$(printf '%s\n' "$release_json" | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    latest_version="${latest_tag%%-*}"
+    latest_version="${latest_version#v}"
+
+    if [[ -z "$latest_version" ]]; then
+        warn "无法获取最新Xray版本，保留现有二进制 / Could not determine latest Xray version; keeping existing binary"
+        log_info "Skipped Xray binary download for ${arch_binary_name}: release metadata unavailable"
+        return 1
+    fi
+
+    if [[ "$current_version" == "$latest_version" ]]; then
+        log_info "现有Xray已是最新版本${current_version}，跳过二进制下载 / Existing Xray ${current_version} is current; skipping binary download"
+        return 1
+    fi
+
+    log_info "Xray版本${current_version}不是最新版本${latest_version}，将下载 / Xray ${current_version} is older than ${latest_version}; downloading"
+    return 0
+}
+
+xray_data_checksum() {
+    local checksum_key="$1"
+    local release_json=""
+
+    release_json=$(curl -fsSL --max-time 15 "$GITHUB_RELEASE_API_URL" 2>>"$LOG_FILE" || true)
+    printf '%s\n' "$release_json" |
+        sed 's/\\\\n/\n/g' |
+        sed -n "s/.*${checksum_key}:[[:space:]]*\([[:xdigit:]]\{64\}\).*/\1/p" |
+        head -n 1
+}
+
+update_xray_data_file() {
+    local asset_name="$1"
+    local checksum_key="$2"
+    local data_path="/usr/local/share/xray/${asset_name}"
+    local expected_checksum=""
+    local actual_checksum=""
+    local temp_path=""
+
+    expected_checksum="$(xray_data_checksum "$checksum_key")"
+    if [[ -f "$data_path" && -n "$expected_checksum" ]] && command -v sha256sum >/dev/null 2>&1; then
+        actual_checksum="$(sha256sum "$data_path" | awk '{print $1}')"
+        if [[ "$actual_checksum" == "$expected_checksum" ]]; then
+            log_info "${asset_name}校验和匹配，跳过下载 / ${asset_name} checksum matches; skipping download"
+            return 0
+        fi
+        log_info "${asset_name}校验和不匹配，将更新 / ${asset_name} checksum differs; updating"
+    elif [[ -f "$data_path" && -z "$expected_checksum" ]]; then
+        warn "无法获取${asset_name}校验和，保留现有文件 / Could not get ${asset_name} checksum; keeping existing file"
+        return 0
+    elif [[ -f "$data_path" ]] && ! command -v sha256sum >/dev/null 2>&1; then
+        warn "缺少sha256sum，将更新${asset_name} / sha256sum is unavailable; updating ${asset_name}"
+    fi
+
+    temp_path="$(mktemp "/tmp/nokey.${asset_name}.XXXXXX")" || {
+        task_fail
+        error "创建${asset_name}临时文件失败 / Failed to create temporary file for ${asset_name}"
+        exit 1
+    }
+    if ! curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${asset_name}" -o "$temp_path" >> "$LOG_FILE" 2>&1; then
+        rm -f "$temp_path"
+        task_fail
+        error "下载${asset_name}失败 / Failed to download ${asset_name}"
+        return 1
+    fi
+
+    if [[ -n "$expected_checksum" ]] && command -v sha256sum >/dev/null 2>&1; then
+        actual_checksum="$(sha256sum "$temp_path" | awk '{print $1}')"
+        if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+            rm -f "$temp_path"
+            task_fail
+            error "${asset_name}校验和验证失败 / Checksum verification failed for ${asset_name}"
+            return 1
+        fi
+    fi
+
+    if ! mv "$temp_path" "$data_path"; then
+        rm -f "$temp_path"
+        task_fail
+        error "安装${asset_name}失败 / Failed to install ${asset_name}"
+        return 1
+    fi
+    log_verbose "Installed verified ${asset_name}"
+}
+
 load_runtime_vars_from_existing_config() {
     local config_path="/usr/local/etc/xray/config.json"
     local x25519_output=""
@@ -902,19 +1008,18 @@ install_xray() {
 
     log_info "检测到系统 / Detected OS: $(resolve_os_family) | 架构 / Architecture: ${arch_name}"
     
-    log_info "正在从GitHub Releases下载xray二进制文件 / Downloading xray binary and data files from GitHub Releases"
-
     mkdir -p /usr/local/bin /usr/local/share/xray /usr/local/etc/xray /var/log/xray || { task_fail; error "创建xray目录失败 / Failed to create xray directories"; exit 1; }
     log_verbose "Created install directories under /usr/local and /var/log/xray"
 
-    log_verbose "Downloading: ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/xray"
-    curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}" -o /usr/local/bin/xray >> "$LOG_FILE" 2>&1 || { task_fail; error "下载${arch_binary_name}失败 / Failed to download ${arch_binary_name}"; exit 1; }
-    log_verbose "Downloading: ${GITHUB_RELEASE_BASE_URL}/geoip.dat -> /usr/local/share/xray/geoip.dat"
-    curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/geoip.dat" -o /usr/local/share/xray/geoip.dat >> "$LOG_FILE" 2>&1 || { task_fail; error "下载geoip.dat失败 / Failed to download geoip.dat"; exit 1; }
-    log_verbose "Downloading: ${GITHUB_RELEASE_BASE_URL}/geosite.dat -> /usr/local/share/xray/geosite.dat"
-    curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/geosite.dat" -o /usr/local/share/xray/geosite.dat >> "$LOG_FILE" 2>&1 || { task_fail; error "下载geosite.dat失败 / Failed to download geosite.dat"; exit 1; }
-    chmod 755 /usr/local/bin/xray
-    log_verbose "Set executable permissions on /usr/local/bin/xray"
+    if xray_binary_needs_download "$arch_binary_name"; then
+        log_info "正在从GitHub Releases下载xray二进制文件 / Downloading xray binary from GitHub Releases"
+        log_verbose "Downloading: ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/xray"
+        curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}" -o /usr/local/bin/xray >> "$LOG_FILE" 2>&1 || { task_fail; error "下载${arch_binary_name}失败 / Failed to download ${arch_binary_name}"; exit 1; }
+        chmod 755 /usr/local/bin/xray
+        log_verbose "Set executable permissions on /usr/local/bin/xray"
+    fi
+    update_xray_data_file "geoip.dat" "SHA256-geoip.dat" || exit 1
+    update_xray_data_file "geosite.dat" "SHA256-geosite.dat" || exit 1
 
     local xray_rc_tmp
     local xray_service_tmp
