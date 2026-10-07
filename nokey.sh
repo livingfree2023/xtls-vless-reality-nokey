@@ -2026,7 +2026,7 @@ ${socks_inbound_json}}
         },
         "routing": {
           "domainStrategy": "IPIfNonMatch",
-//          "rules": [
+          "rules": [
 //            {
 //              "type": "field",
 //              "domain": ["geosite:"],
