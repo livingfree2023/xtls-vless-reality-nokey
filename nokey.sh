@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.28"
+readonly SCRIPT_VERSION="2026.29"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -24,12 +24,16 @@ readonly REALITY_TARGET_CANDIDATES=(
 readonly REALITY_SCAN_TIMEOUT=5
 readonly GITHUB_URL="https://github.com/livingfree2023/nokey"
 readonly GITHUB_CMD="bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.sh)"
-readonly SERVICE_NAME="xray.service"
-readonly SERVICE_NAME_ALPINE="xray"
+readonly SERVICE_NAME="nokey.service"
+readonly SERVICE_NAME_ALPINE="nokey"
+readonly NOKEY_CONFIG_DIR="/usr/local/etc/nokey"
+readonly NOKEY_CONFIG_FILE="${NOKEY_CONFIG_DIR}/nokey.json"
 readonly GITHUB_RELEASE_BASE_URL="https://github.com/livingfree2023/nokey/releases/latest/download"
 readonly GITHUB_RELEASE_API_URL="https://api.github.com/repos/livingfree2023/nokey/releases/latest"
-readonly GITHUB_XRAY_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray.rc"
-readonly GITHUB_XRAY_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray.service"
+readonly GITHUB_NOKEY_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.rc"
+readonly GITHUB_NOKEY_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.service"
+readonly GITHUB_XRAY_RC_URL="$GITHUB_NOKEY_RC_URL"
+readonly GITHUB_XRAY_SERVICE_URL="$GITHUB_NOKEY_SERVICE_URL"
 readonly GITHUB_REALM_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.rc"
 readonly GITHUB_REALM_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.service"
 readonly REALM_SERVICE_NAME="realm.service"
@@ -67,7 +71,7 @@ add_limiter_mode=0
 change_sni_mode=0
 addsocks_mode=0
 arg_count=0
-xray_config_path="/usr/local/etc/xray/config.json"
+xray_config_path="$NOKEY_CONFIG_FILE"
 patch_jq_source=""
 patch_cleanup=""
 patch_tmp_out=""
@@ -718,7 +722,7 @@ validate_keepconfig_conflicts() {
 
     if [[ "$arg_port_set" -eq 1 || "$arg_domain_set" -eq 1 || "$arg_uuid_set" -eq 1 || "$arg_shortid_set" -eq 1 || "$arg_mldsa_set" -eq 1 || "$arg_mldsa65seed_set" -eq 1 || "$arg_mldsa65verify_set" -eq 1 || "$addsocks_mode" -eq 1 ]]; then
         error "冲突：--keepconfig不能与配置参数或--addsocks同时使用 / Conflict: --keepconfig cannot be used with config arguments or --addsocks."
-        error "使用--keepconfig时，所有运行参数将从/usr/local/etc/xray/config.json读取 / When --keepconfig is set, all runtime values are loaded from /usr/local/etc/xray/config.json."
+        error "使用--keepconfig时，所有运行参数将从${xray_config_path}读取 / When --keepconfig is set, all runtime values are loaded from ${xray_config_path}."
         exit 1
     fi
 }
@@ -861,7 +865,11 @@ update_xray_data_file() {
 }
 
 load_runtime_vars_from_existing_config() {
-    local config_path="/usr/local/etc/xray/config.json"
+    local config_path="$xray_config_path"
+    if [[ ! -f "$config_path" && -f "/usr/local/etc/xray/config.json" ]]; then
+        config_path="/usr/local/etc/xray/config.json"
+        xray_config_path="/usr/local/etc/xray/config.json"
+    fi
     local x25519_output=""
     local jq_error=""
     local jq_target="$config_path"
@@ -895,7 +903,7 @@ load_runtime_vars_from_existing_config() {
             error "无法创建临时文件用于JSONC解析 / Failed to create temporary file for JSONC parsing."
             exit 1
         }
-        sed -E 's@[[:space:]]+//.*$@@' "$config_path" > "$jsonc_tmp"
+        sed -E 's@^[[:space:]]*//.*$@@; s@[[:space:]]+//.*$@@' "$config_path" > "$jsonc_tmp"
 
         if ! jq empty "$jsonc_tmp" >/dev/null 2>/tmp/nokey-jq-stripped.err; then
             local stripped_error=""
@@ -1008,7 +1016,7 @@ install_xray() {
 
     log_info "检测到系统 / Detected OS: $(resolve_os_family) | 架构 / Architecture: ${arch_name}"
     
-    mkdir -p /usr/local/bin /usr/local/share/xray /usr/local/etc/xray /var/log/xray || { task_fail; error "创建xray目录失败 / Failed to create xray directories"; exit 1; }
+    mkdir -p /usr/local/bin /usr/local/share/xray "$NOKEY_CONFIG_DIR" /var/log/xray || { task_fail; error "创建nokey目录失败 / Failed to create nokey directories"; exit 1; }
     log_verbose "Created install directories under /usr/local and /var/log/xray"
 
     if xray_binary_needs_download "$arch_binary_name"; then
@@ -1021,37 +1029,48 @@ install_xray() {
     update_xray_data_file "geoip.dat" "SHA256-geoip.dat" || exit 1
     update_xray_data_file "geosite.dat" "SHA256-geosite.dat" || exit 1
 
-    local xray_rc_tmp
-    local xray_service_tmp
-    xray_rc_tmp="$(mktemp /tmp/nokey.xray.rc.XXXXXX)" || { task_fail; error "创建xray.rc临时文件失败 / Failed to create temporary file for xray.rc"; exit 1; }
-    xray_service_tmp="$(mktemp /tmp/nokey.xray.service.XXXXXX)" || { task_fail; error "创建xray.service临时文件失败 / Failed to create temporary file for xray.service"; exit 1; }
+    local nokey_rc_tmp
+    local nokey_service_tmp
+    nokey_rc_tmp="$(mktemp /tmp/nokey.rc.XXXXXX)" || { task_fail; error "创建nokey.rc临时文件失败 / Failed to create temporary file for nokey.rc"; exit 1; }
+    nokey_service_tmp="$(mktemp /tmp/nokey.service.XXXXXX)" || { task_fail; error "创建nokey.service临时文件失败 / Failed to create temporary file for nokey.service"; exit 1; }
 
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-            log_info "安装OpenRC服务 / Installing OpenRC service: /etc/init.d/${SERVICE_NAME_ALPINE}"
-        log_verbose "Downloading service file: ${GITHUB_XRAY_RC_URL} -> ${xray_rc_tmp}"
-        curl -fSL "${GITHUB_XRAY_RC_URL}" -o "${xray_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载xray.rc失败 / Failed to download xray.rc"; exit 1; }
-        configure_openrc_crash_restart "${xray_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置xray崩溃自动重启失败 / Failed to configure xray crash restart"; exit 1; }
-        install -m 755 "${xray_rc_tmp}" /etc/init.d/"$SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "安装/etc/init.d/$SERVICE_NAME_ALPINE失败 / Failed to install /etc/init.d/$SERVICE_NAME_ALPINE"; exit 1; }
-        rm -f "${xray_rc_tmp}" >> "$LOG_FILE" 2>&1
-        log_verbose "Installed OpenRC service file from xray.rc"
+        log_info "安装OpenRC服务 / Installing OpenRC service: /etc/init.d/${SERVICE_NAME_ALPINE}"
+        log_verbose "Downloading service file: ${GITHUB_NOKEY_RC_URL} -> ${nokey_rc_tmp}"
+        curl -fSL "${GITHUB_NOKEY_RC_URL}" -o "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载nokey.rc失败 / Failed to download nokey.rc"; exit 1; }
+        configure_openrc_crash_restart "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置nokey崩溃自动重启失败 / Failed to configure nokey crash restart"; exit 1; }
+        install -m 755 "${nokey_rc_tmp}" /etc/init.d/"$SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "安装/etc/init.d/$SERVICE_NAME_ALPINE失败 / Failed to install /etc/init.d/$SERVICE_NAME_ALPINE"; exit 1; }
+        rm -f "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1
+        log_verbose "Installed OpenRC service file from nokey.rc"
         rc-update add "$SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "启用OpenRC服务$SERVICE_NAME_ALPINE失败 / Failed to enable OpenRC service $SERVICE_NAME_ALPINE"; exit 1; }
         log_verbose "Enabled OpenRC service: $SERVICE_NAME_ALPINE"
+        if [ -f /etc/init.d/xray ]; then
+            rc-service xray stop 2>/dev/null || true
+            rc-update del xray 2>/dev/null || true
+            rm -f /etc/init.d/xray 2>/dev/null || true
+        fi
     else
         log_info "安装systemd服务 / Installing systemd service: /etc/systemd/system/${SERVICE_NAME}"
-        log_verbose "Downloading service file: ${GITHUB_XRAY_SERVICE_URL} -> ${xray_service_tmp}"
-        curl -fSL "${GITHUB_XRAY_SERVICE_URL}" -o "${xray_service_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载xray.service失败 / Failed to download xray.service"; exit 1; }
+        log_verbose "Downloading service file: ${GITHUB_NOKEY_SERVICE_URL} -> ${nokey_service_tmp}"
+        curl -fSL "${GITHUB_NOKEY_SERVICE_URL}" -o "${nokey_service_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载nokey.service失败 / Failed to download nokey.service"; exit 1; }
         # shellcheck disable=SC2016
         sed -e 's/\$INSTALL_USER/nobody/g' \
             -e '/\${temp_CapabilityBoundingSet}/d' \
             -e '/\${temp_AmbientCapabilities}/d' \
             -e '/\${temp_NoNewPrivileges}/d' \
-            "${xray_service_tmp}" > /etc/systemd/system/"$SERVICE_NAME" || { task_fail; error "写入/etc/systemd/system/$SERVICE_NAME失败 / Failed to write /etc/systemd/system/$SERVICE_NAME"; exit 1; }
-        configure_systemd_crash_restart /etc/systemd/system/"$SERVICE_NAME" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置xray崩溃自动重启失败 / Failed to configure xray crash restart"; exit 1; }
-        rm -f "${xray_service_tmp}" >> "$LOG_FILE" 2>&1
-        log_verbose "Installed systemd service file from xray.service"
+            "${nokey_service_tmp}" > /etc/systemd/system/"$SERVICE_NAME" || { task_fail; error "写入/etc/systemd/system/$SERVICE_NAME失败 / Failed to write /etc/systemd/system/$SERVICE_NAME"; exit 1; }
+        configure_systemd_crash_restart /etc/systemd/system/"$SERVICE_NAME" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置nokey崩溃自动重启失败 / Failed to configure nokey crash restart"; exit 1; }
+        rm -f "${nokey_service_tmp}" >> "$LOG_FILE" 2>&1
+        log_verbose "Installed systemd service file from nokey.service"
         systemctl daemon-reload >> "$LOG_FILE" 2>&1 || { task_fail; error "systemctl daemon-reload失败 / systemctl daemon-reload failed"; exit 1; }
         systemctl enable "$SERVICE_NAME" >> "$LOG_FILE" 2>&1 || { task_fail; error "启用systemd服务$SERVICE_NAME失败 / Failed to enable systemd service $SERVICE_NAME"; exit 1; }
         log_verbose "Enabled systemd service: $SERVICE_NAME"
+        if [ -f /etc/systemd/system/xray.service ]; then
+            systemctl stop xray.service 2>/dev/null || true
+            systemctl disable xray.service 2>/dev/null || true
+            rm -f /etc/systemd/system/xray.service 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
+        fi
     fi
 
     task_done
@@ -1374,12 +1393,15 @@ uninstall_singbox() {
 
 uninstall_in_alpine() {
    {
-     rc-service "$SERVICE_NAME_ALPINE" stop
-     rc-update del "$SERVICE_NAME_ALPINE"
+     rc-service "$SERVICE_NAME_ALPINE" stop 2>/dev/null || true
+     rc-update del "$SERVICE_NAME_ALPINE" 2>/dev/null || true
      rm -rf "/usr/local/bin/xray"
      rm -rf "/usr/local/share/xray"
-     rm -rf "/usr/local/etc/xray/"
+     rm -rf "$NOKEY_CONFIG_DIR"
      rm -rf "/etc/init.d/$SERVICE_NAME_ALPINE"
+     rc-service xray stop 2>/dev/null || true
+     rc-update del xray 2>/dev/null || true
+     rm -rf "/etc/init.d/xray" 2>/dev/null || true
    } >> "$LOG_FILE" 2>&1
 }
 
@@ -1388,17 +1410,20 @@ uninstall_xray() {
     task_start "什么？要卸载重装？ / Force Reinstall"
     
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-      info "\nAlpine系统：卸载xray / Alpine OS: uninstall xray"
+      info "\nAlpine系统：卸载nokey / Alpine OS: uninstall nokey"
       uninstall_in_alpine
     else
       {
-        systemctl stop "$SERVICE_NAME"
-        systemctl disable "$SERVICE_NAME"
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        systemctl disable "$SERVICE_NAME" 2>/dev/null || true
         rm -f /etc/systemd/system/"$SERVICE_NAME"
+        systemctl stop xray.service 2>/dev/null || true
+        systemctl disable xray.service 2>/dev/null || true
+        rm -f /etc/systemd/system/xray.service 2>/dev/null || true
         systemctl daemon-reload
         rm -rf "/usr/local/bin/xray"
         rm -rf "/usr/local/share/xray"
-        rm -rf "/usr/local/etc/xray/"
+        rm -rf "$NOKEY_CONFIG_DIR"
       } >> "$LOG_FILE" 2>&1
     fi 
 
@@ -2099,7 +2124,7 @@ restart_xray_service() {
     fi
     if ! "${restart_cmd[@]}" >> "$LOG_FILE" 2>&1; then
         task_fail
-        error "重启xray服务失败，请查看$LOG_FILE获取详情 / Failed to restart xray service. Check $LOG_FILE for details."
+        error "重启nokey服务失败，请查看$LOG_FILE获取详情 / Failed to restart nokey service. Check $LOG_FILE for details."
         exit 1
     fi
     task_done
@@ -2132,6 +2157,10 @@ configure_xray() {
 # $patch_cleanup (if any) for the caller to remove.
 resolve_jq_config_source() {
     local config_path="$xray_config_path"
+    if [[ ! -f "$config_path" && -f "/usr/local/etc/xray/config.json" ]]; then
+        config_path="/usr/local/etc/xray/config.json"
+        xray_config_path="/usr/local/etc/xray/config.json"
+    fi
     patch_jq_source=""
     patch_cleanup=""
     if ! command -v jq >/dev/null 2>&1; then
@@ -2151,7 +2180,7 @@ resolve_jq_config_source() {
         return 1
     }
     # Config may include // comments; strip them so jq can parse it.
-    sed -E 's@[[:space:]]+//.*$@@' "$config_path" > "$patch_cleanup"
+    sed -E 's@^[[:space:]]*//.*$@@; s@[[:space:]]+//.*$@@' "$config_path" > "$patch_cleanup"
     if ! jq empty "$patch_cleanup" >/dev/null 2>&1; then
         rm -f "$patch_cleanup"
         patch_cleanup=""
@@ -2583,7 +2612,7 @@ show_help() {
   echo "  --mldsa65Seed=STRING  设置ML-DSA-65私钥 (默认: 自动生成) / Set ML-DSA-65 private key"
   echo "  --mldsa65Verify=STRING  设置ML-DSA-65公钥 (默认: 自动生成) / Set ML-DSA-65 public key"
   echo "  --caddy            从运行的Caddy服务自动检测域名和端口 / Detect domain and port from Caddy service"
-  echo "  --keepconfig       保留现有配置并从中生成输出链接 / Keep existing config.json and generate links from it"
+  echo "  --keepconfig       保留现有配置并从中生成输出链接 / Keep existing nokey.json and generate links from it"
   echo "  --add-limiter      为现有配置添加REALITY回落限速(独立模式, 不能与其他参数连用) / Add REALITY fallback rate limit to existing config (standalone, no other flags)"
   echo "  --change-sni       仅更换现有配置的REALITY SNI(独立模式, 不能与其他参数连用) / Re-randomize the REALITY SNI in existing config (standalone, no other flags)"
   echo "  --addsocks         添加随机端口和凭据的SOCKS5入站；Xray运行时仅修补现有配置 / Add a SOCKS5 inbound with random port and credentials; patch only when Xray is running"
@@ -2731,7 +2760,7 @@ dry_run_preview() {
     info "将创建目录 / Would create directories:"
     info "  /usr/local/bin"
     info "  /usr/local/share/xray"
-    info "  /usr/local/etc/xray"
+    info "  ${NOKEY_CONFIG_DIR}"
 
     info "将下载文件 / Would download files:"
     info "  ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/xray"
@@ -2743,14 +2772,14 @@ dry_run_preview() {
 
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
         info "将安装服务(OpenRC) / Would install service (OpenRC):"
-        info "  ${GITHUB_XRAY_RC_URL} -> /tmp/nokey.xray.rc.<pid>"
-        info "  /tmp/nokey.xray.rc.<pid> -> /etc/init.d/${SERVICE_NAME_ALPINE}"
+        info "  ${GITHUB_NOKEY_RC_URL} -> /tmp/nokey.rc.<pid>"
+        info "  /tmp/nokey.rc.<pid> -> /etc/init.d/${SERVICE_NAME_ALPINE}"
         info "  rc-update add ${SERVICE_NAME_ALPINE}"
         info "  rc-service ${SERVICE_NAME_ALPINE} restart (after config generation)"
     else
         info "将安装服务(systemd) / Would install service (systemd):"
-        info "  ${GITHUB_XRAY_SERVICE_URL} -> /tmp/nokey.xray.service.<pid>"
-        info "  /tmp/nokey.xray.service.<pid> -> /etc/systemd/system/${SERVICE_NAME}"
+        info "  ${GITHUB_NOKEY_SERVICE_URL} -> /tmp/nokey.service.<pid>"
+        info "  /tmp/nokey.service.<pid> -> /etc/systemd/system/${SERVICE_NAME}"
         info "  systemctl daemon-reload"
         info "  systemctl enable ${SERVICE_NAME}"
         info "  systemctl restart ${SERVICE_NAME} (after config generation)"
@@ -2758,11 +2787,11 @@ dry_run_preview() {
 
     if [[ $keepconfig -eq 1 ]]; then
         info "将保留现有配置 / Would keep existing config:"
-        info "  /usr/local/etc/xray/config.json"
-        info "将解析现有config.json以生成输出链接 / Would parse existing config.json for URL output variables."
+        info "  ${xray_config_path}"
+        info "将解析现有配置以生成输出链接 / Would parse existing config for URL output variables."
     else
         info "将写入配置 / Would write config:"
-        info "  /usr/local/etc/xray/config.json"
+        info "  ${xray_config_path}"
     fi
 
     task_done
@@ -2822,18 +2851,18 @@ check_service_status() {
 
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
       if rc-service "$SERVICE_NAME_ALPINE" status >> "$LOG_FILE" 2>&1; then 
-          info "Xray服务运行中 / Xray is running"
+          info "Nokey服务运行中 / Nokey is running"
       else
-        error "Xray服务未运行 / Xray service is not active" 
+        error "Nokey服务未运行 / Nokey service is not active" 
         rc-service "$SERVICE_NAME_ALPINE" status | tee -a "$LOG_FILE"
         error "详细日志记录在 $LOG_FILE / See complete logs"
         exit 1
       fi
     else
       if systemctl is-active --quiet "$SERVICE_NAME"; then
-        info "Xray服务运行中 / Xray is running"
+        info "Nokey服务运行中 / Nokey is running"
       else
-        error "Xray服务未运行 / Xray service is not active" 
+        error "Nokey服务未运行 / Nokey service is not active" 
         systemctl status "$SERVICE_NAME" | tee -a "$LOG_FILE"
         error "详细日志记录在 $LOG_FILE / See complete logs"
         exit 1

@@ -56,6 +56,9 @@
 curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.sh && chmod +x /usr/local/bin/nokey && nokey
 ```
 
+> **نکته**:
+> نام سرویس به `nokey.service` (در OpenRC: `nokey`) و مسیر فایل تنظیمات به `/usr/local/etc/nokey/nokey.json` تغییر یافته است تا از تداخل با سرویس‌های دیگر Xray جلوگیری شود.
+
 ## منوی قابلیت‌ها و اسکریپت‌های مستقل
 
 اجرای `nokey` بدون پارامتر رفتار قبلی را حفظ می‌کند و Xray VLESS Reality به‌همراه BBR و FQ را نصب می‌کند.

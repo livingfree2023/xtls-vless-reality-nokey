@@ -1,8 +1,8 @@
 #!/bin/bash
 # shellcheck disable=SC2034,SC2154
 
-readonly SERVICE_NAME="xray.service"
-readonly SERVICE_NAME_ALPINE="xray"
+readonly SERVICE_NAME="nokey.service"
+readonly SERVICE_NAME_ALPINE="nokey"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${script_dir}/nokey-common.sh" ]]; then
@@ -18,7 +18,15 @@ else
     . <(curl -fsSL "$common_url")
 fi
 
-xray_config_path="${XRAY_CONFIG:-/usr/local/etc/xray/config.json}"
+if [[ -n "${XRAY_CONFIG:-}" ]]; then
+    xray_config_path="$XRAY_CONFIG"
+elif [[ -f "/usr/local/etc/nokey/nokey.json" ]]; then
+    xray_config_path="/usr/local/etc/nokey/nokey.json"
+elif [[ -f "/usr/local/etc/xray/config.json" ]]; then
+    xray_config_path="/usr/local/etc/xray/config.json"
+else
+    xray_config_path="/usr/local/etc/nokey/nokey.json"
+fi
 netstack=""
 IPv4=""
 IPv6=""

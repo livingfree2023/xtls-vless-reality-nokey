@@ -92,7 +92,13 @@ elif [[ "$PEER_EP" != *":"* ]]; then
   PEER_EP="${PEER_EP}:2408"
 fi
 
-XRAY_CONFIG="/usr/local/etc/xray/config.json"
+if [[ -f "/usr/local/etc/nokey/nokey.json" ]]; then
+  XRAY_CONFIG="/usr/local/etc/nokey/nokey.json"
+elif [[ -f "/usr/local/etc/xray/config.json" ]]; then
+  XRAY_CONFIG="/usr/local/etc/xray/config.json"
+else
+  XRAY_CONFIG="/usr/local/etc/nokey/nokey.json"
+fi
 
 # 构造标准 Xray-core outbound JSON（WARP WireGuard 出口）
 WARP_OUT_JSON=$(jq -n \
@@ -194,16 +200,16 @@ if [ -f /etc/os-release ]; then
   . /etc/os-release
 fi
 if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-  echo "正在重启 xray (OpenRC) ..." >&2
-  if ! rc-service xray restart >/dev/null 2>&1; then
-    echo "错误: 重启 xray 服务失败。" >&2
+  echo "正在重启 nokey (OpenRC) ..." >&2
+  if ! rc-service nokey restart >/dev/null 2>&1 && ! rc-service xray restart >/dev/null 2>&1; then
+    echo "错误: 重启 nokey 服务失败。" >&2
     exit 1
   fi
 else
-  echo "正在重启 xray (systemd) ..." >&2
-  if ! systemctl restart xray.service >/dev/null 2>&1; then
-    echo "错误: 重启 xray 服务失败。" >&2
+  echo "正在重启 nokey (systemd) ..." >&2
+  if ! systemctl restart nokey.service >/dev/null 2>&1 && ! systemctl restart xray.service >/dev/null 2>&1; then
+    echo "错误: 重启 nokey 服务失败。" >&2
     exit 1
   fi
 fi
-echo "xray 服务已重启。" >&2
+echo "nokey 服务已重启。" >&2

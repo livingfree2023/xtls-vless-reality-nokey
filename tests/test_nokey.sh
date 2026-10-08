@@ -110,7 +110,12 @@ dry_run_out="$(dry_run_preview 2>&1 || true)"
 echo "$dry_run_out" | grep -Eq 'releases/latest/download/xray_(amd64|arm64) -> /usr/local/bin/xray' || fail "dry-run should include xray download path"
 [[ "$dry_run_out" == *"releases/latest/download/geoip.dat -> /usr/local/share/xray/geoip.dat"* ]] || fail "dry-run should include geoip.dat download path"
 [[ "$dry_run_out" == *"releases/latest/download/geosite.dat -> /usr/local/share/xray/geosite.dat"* ]] || fail "dry-run should include geosite.dat download path"
-[[ "$dry_run_out" == *"/etc/init.d/xray"* ]] || fail "dry-run alpine should include OpenRC path"
+[[ "$dry_run_out" == *"/etc/init.d/nokey"* ]] || fail "dry-run alpine should include OpenRC path"
+[[ "$dry_run_out" == *"/usr/local/etc/nokey/nokey.json"* ]] || fail "dry-run should include nokey.json config path"
+ID="debian"
+ID_LIKE="debian"
+dry_run_out="$(dry_run_preview 2>&1 || true)"
+[[ "$dry_run_out" == *"/etc/systemd/system/nokey.service"* ]] || fail "dry-run systemd should include nokey.service path"
 pass "dry-run preview output"
 
 # Test 8: BBR guard/message exists for readonly environments
@@ -260,6 +265,7 @@ generate_share_links >/dev/null 2>&1
 EOF
   script -qec "bash '$tmp_script' '$pty_dir' '$REPO_ROOT/nokey.sh'" /dev/null >/dev/null 2>&1 \
     || script -qc "bash '$tmp_script' '$pty_dir' '$REPO_ROOT/nokey.sh'" /dev/null >/dev/null 2>&1 \
+    || script -q /dev/null bash "$tmp_script" "$pty_dir" "$REPO_ROOT/nokey.sh" >/dev/null 2>&1 \
     || true
   if [[ -s "$pty_dir/nokey.url" ]] && ! LC_ALL=C grep -qF "$(printf '\033')" "$pty_dir/nokey.url"; then
     pass "URL_FILE stays ANSI-free on a TTY"
@@ -760,7 +766,7 @@ fi
 if command -v jq >/dev/null 2>&1; then
   socks_build_dir="$(mktemp -d)"
   if (
-    xray_config_path="$socks_build_dir/config.json"
+    xray_config_path="$socks_build_dir/nokey.json"
     port=443
     domain="example.com"
     reality_dest_port=443
@@ -773,10 +779,14 @@ if command -v jq >/dev/null 2>&1; then
     is_tcp_port_unused() { return 0; }
     prepare_socks_inbound
     build_xray_config >/dev/null
-    jq -e '.inbounds | length == 2' "$xray_config_path" >/dev/null
-    [[ "$(jq -r '.inbounds[0].protocol' "$xray_config_path")" == "vless" ]]
-    [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$xray_config_path")" == "0.0.0" ]]
-    [[ "$(jq -r '.inbounds[1].protocol' "$xray_config_path")" == "socks" ]]
+    patch_jq_source=""
+    patch_cleanup=""
+    resolve_jq_config_source
+    jq -e '.inbounds | length == 2' "$patch_jq_source" >/dev/null
+    [[ "$(jq -r '.inbounds[0].protocol' "$patch_jq_source")" == "vless" ]]
+    [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$patch_jq_source")" == "0.0.0" ]]
+    [[ "$(jq -r '.inbounds[1].protocol' "$patch_jq_source")" == "socks" ]]
+    rm -f "$patch_cleanup"
   ); then
     pass "fresh Xray config includes SOCKS inbound"
   else

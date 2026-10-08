@@ -56,6 +56,10 @@ These release assets are generated/synced by GitHub Actions. See: [`./.github/wo
 curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.sh && chmod +x /usr/local/bin/nokey && nokey
 ```
 
+> **Note**:
+> 1. The service is managed as `nokey.service` (OpenRC: `nokey`) with configuration stored at `/usr/local/etc/nokey/nokey.json`, avoiding collisions with existing official Xray services or control panels (e.g., 3x-ui).
+> 2. Installing to `/usr/local/bin/nokey` as shown above ensures full flag compatibility across all shells (Bash, Zsh, Ash/Sh, Fish).
+
 ## Feature menu and standalone scripts
 
 Running `nokey` without parameters keeps the original behavior: Xray VLESS + Reality, BBR, and FQ setup.

@@ -1,5 +1,5 @@
 [Unit]
-Description=Xray Service
+Description=Nokey Service (Xray VLESS Reality)
 Documentation=https://github.com/xtls
 After=network.target nss-lookup.target
 
@@ -9,12 +9,12 @@ ${temp_CapabilityBoundingSet}
 ${temp_AmbientCapabilities}
 ${temp_NoNewPrivileges}
 Environment=XRAY_LOCATION_ASSET=/usr/local/share/xray/
-ExecStart=/usr/local/bin/xray run -confdir /usr/local/etc/xray/
+ExecStart=/usr/local/bin/xray run -c /usr/local/etc/nokey/nokey.json
 Restart=on-failure
 RestartPreventExitStatus=23
 LimitNPROC=10000
 LimitNOFILE=1000000
-RuntimeDirectory=xray
+RuntimeDirectory=nokey
 RuntimeDirectoryMode=0755
 
 [Install]

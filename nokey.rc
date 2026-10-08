@@ -1,17 +1,17 @@
 #!/sbin/openrc-run
 
-name="Xray Daemon"
+name="Nokey Daemon"
 description="A unified platform for anti-censorship"
 
 pidfile="/run/${RC_SVCNAME}.pid"
 extra_commands="checkconfig"
 
 env=${env:-"XRAY_LOCATION_ASSET=/usr/local/share/xray/"} # See: https://github.com/XTLS/Xray-core/blob/main/common/platform/platform.go
-confdir=${confdir:-"/usr/local/etc/xray/"}
+config=${config:-"/usr/local/etc/nokey/nokey.json"}
 command="/usr/local/bin/xray"
-command_args="run -confdir $confdir"
+command_args="run -c $config"
 command_background="yes"
-required_files="$confdir"
+required_files="$config"
 
 depend() {
 	need net
