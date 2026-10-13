@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.31"
+readonly SCRIPT_VERSION="2026.32"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -2047,11 +2047,11 @@ build_xray_config() {
 ${socks_inbound_json}}
         ],
         "outbounds": [
-          {
-            "protocol": "freedom",
-            "settings": {},
-            "tag": "direct"
-          },
+//          {
+//            "protocol": "freedom",
+//            "settings": {},
+//            "tag": "direct"
+//          },
           {
             "protocol": "freedom",
             "streamSettings": {
