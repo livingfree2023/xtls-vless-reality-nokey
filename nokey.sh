@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.30"
+readonly SCRIPT_VERSION="2026.31"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -1024,6 +1024,18 @@ load_runtime_vars_from_existing_config() {
     task_done_with_info "port=${port}, domain=${domain}, uuid=${uuid}"
 }
 
+cleanup_legacy_xray_access_log() {
+    local log_path="${1:-/tmp/xray_access.log}"
+    if [[ ! -f "$log_path" || -L "$log_path" ]]; then
+        return 0
+    fi
+    if ! rm -f "$log_path" >> "$LOG_FILE" 2>&1; then
+        warn "无法清理旧Xray访问日志: $log_path / Could not remove legacy Xray access log: $log_path"
+        return 1
+    fi
+    log_verbose "Removed legacy Xray access log: $log_path"
+}
+
 install_xray() {
     if [[ $force_reinstall == 1 ]]; then
       uninstall_xray
@@ -1037,6 +1049,7 @@ install_xray() {
     else
         systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     fi
+    cleanup_legacy_xray_access_log || { task_fail; error "清理旧Xray访问日志失败 / Failed to clean legacy Xray access log"; exit 1; }
 
     local arch_binary_name=""
     local arch_name=""
@@ -1911,10 +1924,16 @@ generate_crypto() {
 
     
     if [[ -z $private_key ]]; then
-      keys=$(xray x25519)
+      local x25519_status=0
+      keys=$(xray x25519 2>>"$LOG_FILE") || x25519_status=$?
       if [[ -z "$keys" ]]; then
         task_fail
-        error "生成x25519密钥失败，xray是否安装正确？ / Failed to generate x25519 keys. Is xray installed correctly?"
+        log_verbose "xray x25519 failed: exit status ${x25519_status}"
+        if [[ "$x25519_status" -eq 137 ]]; then
+          error "xray x25519被终止（退出码137），请检查容器内存限制和OOM记录 / xray x25519 was killed (exit 137); check the container memory limit and OOM events."
+        else
+          error "生成x25519密钥失败（退出码${x25519_status}），请查看$LOG_FILE / Failed to generate x25519 keys (exit ${x25519_status}); check $LOG_FILE."
+        fi
         exit 1
       fi
       task_start "生成一个私钥 / Generate Private Key"

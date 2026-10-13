@@ -52,6 +52,31 @@ extracted_public="$(extract_public_key_from_x25519_output "$keys_sample_spaced")
 [[ "$extracted_public" == "PUBLIC_SPACED" ]] || fail "public key extraction should support 'Public key:' format"
 pass "spaced label key extraction"
 
+# Current Xray builds label the public key as Password (PublicKey).
+keys_sample_password=$'PrivateKey: PRIVATE_VALUE\nPassword (PublicKey): PUBLIC_VALUE\nHash32: HASH_VALUE'
+[[ "$(extract_public_key_from_x25519_output "$keys_sample_password")" == "PUBLIC_VALUE" ]] || fail "public key extraction should support Password (PublicKey)"
+pass "password label public key extraction"
+
+crypto_failure_output="$(
+  uuid="existing-uuid"
+  private_key=""
+  xray() { return 137; }
+  generate_crypto 2>&1
+)" && fail "generate_crypto should fail when xray is killed"
+[[ "$crypto_failure_output" == *"退出码137"* ]] || fail "killed xray should report exit 137"
+pass "x25519 killed process diagnostic"
+
+legacy_log_dir="$(mktemp -d)"
+printf 'old access log\n' > "$legacy_log_dir/access.log"
+cleanup_legacy_xray_access_log "$legacy_log_dir/access.log"
+[[ ! -e "$legacy_log_dir/access.log" ]] || fail "legacy access log should be removed"
+printf 'keep me\n' > "$legacy_log_dir/target"
+ln -s "$legacy_log_dir/target" "$legacy_log_dir/access.log"
+cleanup_legacy_xray_access_log "$legacy_log_dir/access.log"
+[[ -L "$legacy_log_dir/access.log" && -f "$legacy_log_dir/target" ]] || fail "legacy log cleanup should skip symlinks"
+rm -rf "$legacy_log_dir"
+pass "legacy Xray access log cleanup"
+
 # Test 5: architecture mapping helper
 [[ "$(resolve_arch_binary_name x86_64)" == "xray_amd64" ]] || fail "x86_64 should map to xray_amd64"
 [[ "$(resolve_arch_binary_name amd64)" == "xray_amd64" ]] || fail "amd64 should map to xray_amd64"
