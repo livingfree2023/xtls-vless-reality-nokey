@@ -118,6 +118,19 @@ dry_run_out="$(dry_run_preview 2>&1 || true)"
 [[ "$dry_run_out" == *"/etc/systemd/system/nokey.service"* ]] || fail "dry-run systemd should include nokey.service path"
 pass "dry-run preview output"
 
+# Test 7b: Xray assets and config remain usable by the unprivileged systemd user
+xray_permissions_source="$(declare -f normalize_xray_runtime_permissions)"
+expected_asset_dir_permission="chmod 755 \"\$XRAY_ASSET_DIR\""
+expected_asset_file_permission="chmod 644 \"\$asset_file\""
+expected_config_owner="chown \"\$XRAY_SERVICE_USER\" \"\$config_path\""
+expected_config_permission="chmod 600 \"\$config_path\""
+[[ "$xray_permissions_source" == *"$expected_asset_dir_permission"* ]] || fail "Xray asset directory should remain searchable by the service user"
+[[ "$xray_permissions_source" == *"$expected_asset_file_permission"* ]] || fail "Xray rule files should remain readable by the service user"
+[[ "$xray_permissions_source" == *"$expected_config_owner"* && "$xray_permissions_source" == *"$expected_config_permission"* ]] || fail "Xray config should be readable only by the service user"
+grep -qx 'StandardOutput=journal' "$REPO_ROOT/nokey.service" || fail "nokey service should send stdout to journald"
+grep -qx 'StandardError=journal' "$REPO_ROOT/nokey.service" || fail "nokey service should send stderr to journald"
+pass "xray runtime permissions and journald logging"
+
 # Test 8: BBR guard/message exists for readonly environments
 enable_bbr_source="$(declare -f enable_bbr)"
 [[ "$enable_bbr_source" == *'[[ ! -w /etc/sysctl.conf ]]'* ]] || fail "enable_bbr should check writable sysctl.conf"
@@ -786,6 +799,8 @@ if command -v jq >/dev/null 2>&1; then
     [[ "$(jq -r '.inbounds[0].protocol' "$patch_jq_source")" == "vless" ]]
     [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$patch_jq_source")" == "0.0.0" ]]
     [[ "$(jq -r '.inbounds[1].protocol' "$patch_jq_source")" == "socks" ]]
+    [[ "$(jq -r '.log | has("access")' "$patch_jq_source")" == "false" ]]
+    [[ "$(jq -r '.log | has("error")' "$patch_jq_source")" == "false" ]]
     rm -f "$patch_cleanup"
   ); then
     pass "fresh Xray config includes SOCKS inbound"
@@ -795,6 +810,27 @@ if command -v jq >/dev/null 2>&1; then
   rm -rf "$socks_build_dir"
 else
   pass "fresh SOCKS config test skipped (jq unavailable)"
+fi
+
+# Test 41b: existing file logs are migrated to systemd journal output
+if command -v jq >/dev/null 2>&1; then
+  journald_config_dir="$(mktemp -d)"
+  if (
+    xray_config_path="$journald_config_dir/config.json"
+    printf '%s\n' '{"log":{"access":"/tmp/xray_access.log","error":"/tmp/xray_error.log","loglevel":"error"}}' > "$xray_config_path"
+    patch_jq_source=""
+    patch_cleanup=""
+    configure_xray_journald_logging >/dev/null
+    [[ "$(jq -r '.log | has("access")' "$xray_config_path")" == "false" ]]
+    [[ "$(jq -r '.log | has("error")' "$xray_config_path")" == "false" ]]
+  ); then
+    pass "existing Xray logs migrate to journald"
+  else
+    fail "configure_xray_journald_logging should remove file log paths"
+  fi
+  rm -rf "$journald_config_dir"
+else
+  pass "journald migration test skipped (jq unavailable)"
 fi
 
 # Test 42: --singbox and --singbox-only select distinct installation modes

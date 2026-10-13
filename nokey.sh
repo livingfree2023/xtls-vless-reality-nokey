@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.29"
+readonly SCRIPT_VERSION="2026.30"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -26,6 +26,8 @@ readonly GITHUB_URL="https://github.com/livingfree2023/nokey"
 readonly GITHUB_CMD="bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.sh)"
 readonly SERVICE_NAME="nokey.service"
 readonly SERVICE_NAME_ALPINE="nokey"
+readonly XRAY_SERVICE_USER="nobody"
+readonly XRAY_ASSET_DIR="/usr/local/share/xray"
 readonly NOKEY_CONFIG_DIR="/usr/local/etc/nokey"
 readonly NOKEY_CONFIG_FILE="${NOKEY_CONFIG_DIR}/nokey.json"
 readonly GITHUB_RELEASE_BASE_URL="https://github.com/livingfree2023/nokey/releases/latest/download"
@@ -813,7 +815,7 @@ xray_data_checksum() {
 update_xray_data_file() {
     local asset_name="$1"
     local checksum_key="$2"
-    local data_path="/usr/local/share/xray/${asset_name}"
+    local data_path="${XRAY_ASSET_DIR}/${asset_name}"
     local expected_checksum=""
     local actual_checksum=""
     local temp_path=""
@@ -862,6 +864,33 @@ update_xray_data_file() {
         return 1
     fi
     log_verbose "Installed verified ${asset_name}"
+}
+
+normalize_xray_runtime_permissions() {
+    local config_path="${1:-}"
+    local config_dir=""
+    local asset_file=""
+
+    if [[ -d "$XRAY_ASSET_DIR" ]] && ! chmod 755 "$XRAY_ASSET_DIR"; then
+        log_info "Unable to set Xray asset directory permissions: ${XRAY_ASSET_DIR}"
+        return 1
+    fi
+
+    for asset_file in "${XRAY_ASSET_DIR}/geoip.dat" "${XRAY_ASSET_DIR}/geosite.dat"; do
+        if [[ -f "$asset_file" ]] && ! chmod 644 "$asset_file"; then
+            log_info "Unable to set Xray asset permissions: ${asset_file}"
+            return 1
+        fi
+    done
+
+    if [[ -n "$config_path" && -f "$config_path" ]]; then
+        config_dir="$(dirname "$config_path")"
+        if ! chmod 711 "$config_dir" || ! chown "$XRAY_SERVICE_USER" "$config_path" || ! chmod 600 "$config_path"; then
+            log_info "Unable to set Xray config permissions: ${config_path}"
+            return 1
+        fi
+    fi
+
 }
 
 load_runtime_vars_from_existing_config() {
@@ -1016,8 +1045,8 @@ install_xray() {
 
     log_info "检测到系统 / Detected OS: $(resolve_os_family) | 架构 / Architecture: ${arch_name}"
     
-    mkdir -p /usr/local/bin /usr/local/share/xray "$NOKEY_CONFIG_DIR" /var/log/xray || { task_fail; error "创建nokey目录失败 / Failed to create nokey directories"; exit 1; }
-    log_verbose "Created install directories under /usr/local and /var/log/xray"
+    mkdir -p /usr/local/bin "$XRAY_ASSET_DIR" "$NOKEY_CONFIG_DIR" || { task_fail; error "创建nokey目录失败 / Failed to create nokey directories"; exit 1; }
+    log_verbose "Created install directories under /usr/local"
 
     if xray_binary_needs_download "$arch_binary_name"; then
         log_info "正在从GitHub Releases下载xray二进制文件 / Downloading xray binary from GitHub Releases"
@@ -1028,6 +1057,7 @@ install_xray() {
     fi
     update_xray_data_file "geoip.dat" "SHA256-geoip.dat" || exit 1
     update_xray_data_file "geosite.dat" "SHA256-geosite.dat" || exit 1
+    normalize_xray_runtime_permissions || { task_fail; error "设置Xray运行时文件权限失败 / Failed to set Xray runtime file permissions"; exit 1; }
 
     local nokey_rc_tmp
     local nokey_service_tmp
@@ -1054,7 +1084,7 @@ install_xray() {
         log_verbose "Downloading service file: ${GITHUB_NOKEY_SERVICE_URL} -> ${nokey_service_tmp}"
         curl -fSL "${GITHUB_NOKEY_SERVICE_URL}" -o "${nokey_service_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载nokey.service失败 / Failed to download nokey.service"; exit 1; }
         # shellcheck disable=SC2016
-        sed -e 's/\$INSTALL_USER/nobody/g' \
+        sed -e "s/\\\$INSTALL_USER/${XRAY_SERVICE_USER}/g" \
             -e '/\${temp_CapabilityBoundingSet}/d' \
             -e '/\${temp_AmbientCapabilities}/d' \
             -e '/\${temp_NoNewPrivileges}/d' \
@@ -1950,8 +1980,6 @@ build_xray_config() {
     reality_template=$(cat <<-EOF
       { 
         "log": {
-          "access": "/tmp/xray_access.log",
-          "error": "/tmp/xray_error.log",
           "loglevel": "error"
         },
         "inbounds": [
@@ -2117,6 +2145,11 @@ log_info "--- ${config_path} ---"
 
 restart_xray_service() {
     task_start "冲刺，开启服务 / Starting Service"
+    if ! normalize_xray_runtime_permissions "$xray_config_path"; then
+        task_fail
+        error "设置Xray运行时文件权限失败 / Failed to set Xray runtime file permissions"
+        exit 1
+    fi
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
         restart_cmd=(rc-service "$SERVICE_NAME_ALPINE" restart)
     else
@@ -2134,6 +2167,7 @@ configure_xray() {
         initialize_ip_from_netstack
         info "将保留现有配置 --keepconfig / Keeping existing config due to --keepconfig"
         load_runtime_vars_from_existing_config
+        configure_xray_journald_logging || { error "配置Xray journald日志失败 / Failed to configure Xray journald logging"; exit 1; }
         info "跳过配置生成 --keepconfig / Skip config generation due to --keepconfig"
     else
         initialize_variables
@@ -2188,6 +2222,36 @@ resolve_jq_config_source() {
         return 1
     fi
     patch_jq_source="$patch_cleanup"
+}
+
+configure_xray_journald_logging() {
+    local journald_tmp=""
+
+    if ! resolve_jq_config_source; then
+        return 1
+    fi
+
+    journald_tmp="$(mktemp /tmp/nokey-config-journald.XXXXXX)" || {
+        error "创建journald配置临时文件失败 / Failed to create temporary file for journald config."
+        rm -f "$patch_cleanup"
+        return 1
+    }
+
+    if ! jq 'del(.log.access, .log.error)' "$patch_jq_source" > "$journald_tmp" 2>>"$LOG_FILE"; then
+        error "移除Xray文件日志配置失败，请查看$LOG_FILE / Failed to remove Xray file logging. Check $LOG_FILE."
+        rm -f "$journald_tmp" "$patch_cleanup"
+        return 1
+    fi
+
+    if ! mv "$journald_tmp" "$xray_config_path"; then
+        error "写入journald配置失败: $xray_config_path / Failed to write journald config to $xray_config_path."
+        rm -f "$journald_tmp" "$patch_cleanup"
+        return 1
+    fi
+
+    [[ -n "$patch_cleanup" ]] && rm -f "$patch_cleanup"
+    patch_cleanup=""
+    log_info "Configured Xray logging for systemd journal"
 }
 
 # Same randomization as build_xray_config: ~1 Mbps sustained / 2 Mbps burst,
@@ -2395,8 +2459,11 @@ patch_existing_xray_config() {
         rm -f "$patch_cleanup"
         exit 1
     fi
-    chmod 644 "$xray_config_path"
     [[ -n "$patch_cleanup" ]] && rm -f "$patch_cleanup"
+    if ! configure_xray_journald_logging; then
+        task_fail
+        exit 1
+    fi
     task_done
 
     restart_xray_service

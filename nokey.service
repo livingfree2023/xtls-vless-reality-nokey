@@ -10,6 +10,8 @@ ${temp_AmbientCapabilities}
 ${temp_NoNewPrivileges}
 Environment=XRAY_LOCATION_ASSET=/usr/local/share/xray/
 ExecStart=/usr/local/bin/xray run -c /usr/local/etc/nokey/nokey.json
+StandardOutput=journal
+StandardError=journal
 Restart=on-failure
 RestartPreventExitStatus=23
 LimitNPROC=10000
