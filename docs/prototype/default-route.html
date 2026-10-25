@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NoKey 终端交互预览</title>
+<style>
+:root{color-scheme:dark;font:16px/1.65 system-ui,sans-serif;background:#101419;color:#e5e9ed}body{max-width:1080px;margin:48px auto;padding:0 24px}h1{font-size:30px;letter-spacing:-.6px}p{color:#b0bdc8;max-width:820px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.panel{border:1px solid #303b46;border-radius:12px;overflow:hidden;background:#151c23;margin:24px 0}.bar{background:#202932;padding:10px 18px;color:#aebcca;font-size:13px}.terminal{white-space:pre-wrap;font:14px/1.9 ui-monospace,SFMono-Regular,Menlo,monospace;padding:22px;margin:0}.good{color:#8edab5}.muted{color:#8494a3}.cyan{color:#93ceef}.amber{color:#f3ca80}h2{font-size:18px;margin:30px 0 0}.tag{font-size:12px;border:1px solid #45515e;padding:3px 8px;border-radius:20px}code{color:#93ceef}a{color:#93ceef}@media(max-width:800px){.grid{grid-template-columns:1fr}.terminal{font-size:12px;padding:16px}body{margin:24px auto}}
+</style>
+<h1>NoKey 终端交互预览 <span class="tag">待确认 · 静态原型</span></h1>
+<p>统一阶段输出，诊断详情写入日志。下方文本均为设计示例，不代表真实巡检结果。默认出口菜单展示推荐的“地址族优先”方案。</p>
+<div class="grid"><section><h2>默认出口选择</h2><div class="panel"><div class="bar">nokey --default-route</div><pre class="terminal"><span class="cyan">选择默认出口 / Default egress</span>
+
+当前：IPv4 优先
+网络：IPv4 可用 · IPv6 可用
+
+  1) IPv4 优先 / Prefer IPv4
+  2) IPv6 优先 / Prefer IPv6
+  0) 取消 / Cancel
+
+选择 / Select [1]: <span class="good">2</span>
+
+<span class="muted">TCP 优先尝试所选地址族，必要时尝试另一地址族。
+已指定 IP 的请求保持其地址族。</span>
+
+<span class="good">[OK]</span> 备份现有配置
+<span class="good">[OK]</span> 检查 Xray 配置
+<span class="good">[OK]</span> 应用默认出口并检查服务
+
+默认出口：IPv6 优先
+备份已保存 · 日志：nokey.log</pre></div></section>
+<section><h2>统一进度与日志</h2><div class="panel"><div class="bar">nokey</div><pre class="terminal"><span class="cyan">NoKey · Xray VLESS REALITY</span>
+
+<span class="good">[OK]</span> 检查运行环境 / Check environment
+<span class="good">[OK]</span> 更新 Xray / Update Xray
+<span class="good">[OK]</span> 生成凭据 / Generate credentials
+<span class="good">[OK]</span> 验证配置 / Validate configuration
+<span class="good">[OK]</span> 启动服务 / Start service
+
+默认出口：IPv4 优先
+连接信息已保存至 nokey.url
+日志：nokey.log
+
+<span class="muted">连接信息可在此显示，不写入诊断日志。</span></pre></div><div class="panel"><div class="bar">nokey.log · 纯文本 · 0600</div><pre class="terminal">2026-10-25T16:00:00Z INFO run=… phase=start
+  event=run_start version=… mode=default-route
+2026-10-25T16:00:01Z INFO run=… phase=network
+  ipv4=available ipv6=available
+2026-10-25T16:00:01Z INFO run=… phase=route
+  preferred=ipv6 dns_query=UseIP
+2026-10-25T16:00:02Z INFO run=… phase=validate
+  exit=0 duration_ms=…
+<span class="muted">无私钥、完整分享 URL 或 SOCKS 密码。</span></pre></div></section></div>
+<h2>移除 Sing-box 后的功能菜单</h2><div class="panel"><div class="bar">nokey --menu</div><pre class="terminal">1) 安装 Xray VLESS REALITY
+2) 安装 Realm
+3) 添加 Xray SOCKS5
+4) 配置 Xray WARP
+5) 选择默认出口
+6) 启用 BBR
+7) 申请 SSL 证书
+8) 安装 Hysteria2
+0) 退出</pre></div>
+<h2>待确认的一项行为</h2><p><strong>推荐：IPv4 / IPv6 优先。</strong>双栈 DNS 保留 A 与 AAAA 查询，TCP 使用 Xray Happy Eyeballs；UDP 不承诺自动回退。另一种方案为保留现有 ForceIPv4 / ForceIPv6 的域名解析限制，菜单标为“IPv4 出口 / IPv6 出口”，缺少所选地址族记录的域名可能无法访问。</p>
+<p>新配置把默认直连出站放在第一项；显式 IPv4、IPv6 和 WARP 分流保留各自标签。已有配置修改前备份，校验失败不覆盖，服务恢复失败自动回滚。</p>
+</html>

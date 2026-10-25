@@ -29,12 +29,12 @@
 10. 支持X25519
 11. 支持`--realm`模式安装Realm转发代理（用`--remote`指定目标地址，`--listen`可选）
 12. 支持`--realm-only`模式仅安装Realm（不安装Xray）
-13. 支持`--singbox`模式同时安装Xray和Sing-box，或用`--singbox-only`仅安装Sing-box
-14. 自动探测可用的REALITY目标SNI（参考3x-ui的REALITY Target Scanner，验证TLS 1.3 + HTTP/2）
-15. 支持`--addsocks`为Xray添加带随机端口、用户名和密码的SOCKS5入站
-16. Xray REALITY配置使用`minClientVer: "0.0.0"`兼容旧版客户端
-17. 使用`--menu`选择Realm、SOCKS、WARP、Sing-box、BBR、acme.sh证书和Hysteria2
-18. 缺少`jq`时，SOCKS和WARP功能会通过系统包管理器自动安装
+13. 自动探测可用的REALITY目标SNI（参考3x-ui的REALITY Target Scanner，验证TLS 1.3 + HTTP/2）
+14. 支持`--addsocks`为Xray添加带随机端口、用户名和密码的SOCKS5入站
+15. Xray REALITY配置使用`minClientVer: "0.0.0"`兼容旧版客户端
+16. 使用`--menu`选择Realm、SOCKS、WARP、BBR、acme.sh证书和Hysteria2
+17. 缺少`jq`时，SOCKS和WARP功能会通过系统包管理器自动安装
+18. `--default-route` 用菜单选择双栈VPS的 IPv4 / IPv6 出口偏好
 
 > 已测试包括：ubuntu22/debian11/Rocky9.2/CentOS7.6/Fedora30/Alma9.2/alpine3.22，欢迎测试提issue或者报告成功结果
 
@@ -66,7 +66,6 @@ nokey --menu
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.sh) --remote=1.2.3.4:443
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-socks.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-warp.sh)
-bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/singbox.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/bbr.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/acme-cert.sh) --domain=example.com
 HYSTERIA_CF_TOKEN=your-cloudflare-token bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com
@@ -82,6 +81,25 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 ```
 nokey
 ```
+
+### 双栈VPS默认出口
+
+```bash
+nokey --default-route
+```
+
+菜单可选择 IPv4 优先或 IPv6 优先。TCP 连接会优先尝试所选地址族，必要时尝试另一地址族；UDP 和目标为 IP 地址的连接不保证这种回退。
+
+无人值守时可直接指定：
+
+```bash
+nokey --default-route=4
+nokey --default-route=6
+```
+
+`--netstack=4|6` 选择客户端连接使用的服务器地址；`--default-route` 选择 Xray 访问目标网站时的出口偏好。双栈 DNS 保留 A 和 AAAA 查询。已有配置会先备份并校验，再应用选择。
+
+Sing-box 安装功能已移除，旧参数 `--singbox` 和 `--singbox-only` 会在更改系统前报错。更新脚本不会自动卸载服务器上已安装的 Sing-box。
 
 ### 为Xray添加SOCKS5入站
 ```
@@ -99,7 +117,7 @@ socks5h://USERNAME:PASSWORD@SERVER_IP:PORT
 curl --proxy 'socks5h://USERNAME:PASSWORD@SERVER_IP:PORT' https://ipinfo.io
 ```
 
-> SOCKS5本身不加密，不建议直接暴露在不可信公网。请配合防火墙限制来源地址，并妥善保存`nokey.url`和`nokey.log`中的凭据。
+> SOCKS5本身不加密，不建议直接暴露在不可信公网。请配合防火墙限制来源地址，并妥善保存`nokey.url`中的凭据。
 
 > `minClientVer: "0.0.0"`允许旧版Xray客户端连接，但旧客户端的TLS指纹可能更容易被识别；这是为兼容性做出的明确取舍。
 
@@ -120,29 +138,6 @@ nokey --netstack=6 --realm --remote [2001:db8::1]:443
 ### 场景三：只安装Realm转发代理（不安装Xray）
 ```
 nokey --realm-only --remote 1.2.3.4:443
-```
-
-### 场景四：安装Xray + Sing-box（VLESS Reality Vision）
-```
-# 同时安装Xray和Sing-box；两者自动使用不同的入站端口
-nokey --singbox
-
-# 安装Xray + Sing-box + Realm转发代理
-nokey --singbox --realm --remote 1.2.3.4:443
-
-# 指定Xray端口和共用UUID；Sing-box端口仍自动选择以避免冲突
-nokey --singbox --port 12345 --uuid "your-uuid-here"
-
-# 指定SNI域名
-nokey --singbox --domain www.example.com
-
-# 仅预览安装流程
-nokey --singbox --dry-run
-```
-
-### 场景五：仅安装Sing-box（不安装Xray）
-```
-nokey --singbox-only
 ```
 
 ### 其他 
@@ -174,22 +169,13 @@ nokey --dry-run
 ```
 nokey --remove              # 卸载Xray（如果有Realm也一起卸载）
 nokey --realm-only --remove  # 仅卸载Realm
-nokey --singbox --remove     # 卸载Xray和Sing-box（如果有Realm也一起卸载）
-nokey --singbox-only --remove # 仅卸载Sing-box
 ```
-
-
-## 为什么从本仓库下载二进制
-
-`nokey.sh` 默认从本仓库 Releases 下载 `xray_amd64/xray_arm64/realm_amd64/realm_arm64/sing-box_amd64/sing-box_arm64/geoip.dat/geosite.dat`，而不是安装时去官方仓库临时拉取并解压 ZIP。这样做的目的：
-
-1. 减少安装阶段的 CPU 和内存开销，提升低配机器成功率（尤其是 Alpine 小内存 Pod）。
-2. 降低外部依赖数量，让安装链路更短、更稳定。
-3. 保证安装输入可控，避免每次现场执行复杂安装脚本。
-
-这些发布文件由 GitHub Action 自动同步生成，流程见：[`./.github/workflows/blank.yml`](.github/workflows/blank.yml)。
 
 
 _感谢 [crazypeace](https://github.com/crazypeace/)_
 _感谢 [@RPRX](https://github.com/RPRX)_
 _感谢 [ProjectX](https://github.com/XTLS)_
+
+### 运行日志
+
+`nokey.log` 提供带时间、级别和耗时的脱敏诊断；连接信息保存在 `nokey.url`。两者权限均为 `0600`。需要更细的诊断时使用 `NOKEY_LOG_LEVEL=DEBUG nokey --default-route=4`；支持 `DEBUG`、`INFO`、`WARN`、`ERROR`，默认 `INFO`。

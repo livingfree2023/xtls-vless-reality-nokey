@@ -8,12 +8,12 @@ if [[ -z "${URL_FILE:-}" ]]; then
     readonly URL_FILE="nokey.url"
 fi
 if [[ -t 1 ]]; then
-    readonly red='\e[91m'
-    readonly green='\e[92m'
-    readonly yellow='\e[93m'
-    readonly magenta='\e[95m'
-    readonly cyan='\e[96m'
-    readonly none='\e[0m'
+    readonly red=$'\033[91m'
+    readonly green=$'\033[92m'
+    readonly yellow=$'\033[93m'
+    readonly magenta=$'\033[95m'
+    readonly cyan=$'\033[96m'
+    readonly none=$'\033[0m'
 else
     readonly red=''
     readonly green=''
@@ -23,65 +23,242 @@ else
     readonly none=''
 fi
 
+# All file writes are opt-in through helpers; sourcing this file performs no I/O.
+validate_log_level() {
+    case "${NOKEY_LOG_LEVEL:-INFO}" in
+        DEBUG|debug) nokey_log_threshold=0 ;;
+        INFO|info) nokey_log_threshold=1 ;;
+        WARN|warn) nokey_log_threshold=2 ;;
+        ERROR|error) nokey_log_threshold=3 ;;
+        *) printf '%s\n' 'NOKEY_LOG_LEVEL must be DEBUG, INFO, WARN, or ERROR' >&2; return 2 ;;
+    esac
+}
+
+secure_output_file() {
+    local output_path="$1"
+    if [[ -L "$output_path" || ( -e "$output_path" && ! -f "$output_path" ) ]]; then
+        printf 'Refusing unsafe output path: %s\n' "$output_path" >&2
+        return 1
+    fi
+    (umask 077; : >> "$output_path") || return 1
+    chmod 600 "$output_path"
+}
+
+# Preserve useful legacy diagnostics while removing credentials written by older
+# installers. Copy metadata first, then atomically replace the same-directory
+# file; any failure leaves the restricted original untouched.
+sanitize_log_history() (
+    local history_path="$1" history_tmp=""
+    [[ -f "$history_path" && ! -L "$history_path" ]] || return 1
+    history_tmp="$(mktemp "${history_path}.sanitize.XXXXXX")" || return 1
+    trap 'rm -f "$history_tmp"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    if ! cp -p "$history_path" "$history_tmp" ||
+       ! chmod 600 "$history_tmp" ||
+       ! sanitize_log_stream < "$history_path" > "$history_tmp" ||
+       ! touch -r "$history_path" "$history_tmp" ||
+       ! mv -f "$history_tmp" "$history_path"; then
+        rm -f "$history_tmp"
+        return 1
+    fi
+)
+
 init_output_files() {
-    : > "$LOG_FILE"
-    : > "$URL_FILE"
+    local rotate_log=0
+    validate_log_level || return $?
+    secure_output_file "$LOG_FILE" || return 1
+    secure_output_file "$URL_FILE" || return 1
+    if [[ -L "${LOG_FILE}.1" || ( -e "${LOG_FILE}.1" && ! -f "${LOG_FILE}.1" ) ]]; then
+        printf '%s\n' 'Refusing unsafe previous log path' >&2
+        return 1
+    fi
+    [[ "$(wc -c < "$LOG_FILE")" -gt 1048576 ]] && rotate_log=1
+    sanitize_log_history "$LOG_FILE" || return 1
+    if [[ "$rotate_log" -eq 1 ]]; then
+        mv -f "$LOG_FILE" "${LOG_FILE}.1" || return 1
+        chmod 600 "${LOG_FILE}.1" || return 1
+        secure_output_file "$LOG_FILE" || return 1
+    elif [[ -f "${LOG_FILE}.1" ]]; then
+        secure_output_file "${LOG_FILE}.1" || return 1
+        sanitize_log_history "${LOG_FILE}.1" || return 1
+    fi
+    if [[ "${1:-}" != preserve-shares ]]; then : > "$URL_FILE" || return 1; fi
+    nokey_run_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    log_event INFO 'run_start'
 }
 
-# Helper functions
-error() {
-    echo -e "\n${red}$1${none}\n" | tee -a "$LOG_FILE"
+# Redact known runtime values before parsing arbitrary command diagnostics.
+# The awk pass also handles unknown credentials, URI payloads, ANSI sequences,
+# and multiline JSON sensitive values. Never log command argv or raw configs.
+sanitize_log_stream() {
+    local log_line="" secret_name="" secret_value="" secret_part=""
+    while IFS= read -r log_line || [[ -n "$log_line" ]]; do
+        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password; do
+            secret_value="${!secret_name:-}"
+            while [[ -n "$secret_value" ]]; do
+                secret_part="${secret_value%%$'\n'*}"
+                if [[ -n "$secret_part" ]]; then
+                    log_line="${log_line//"$secret_part"/[redacted]}"
+                fi
+                [[ "$secret_value" == *$'\n'* ]] || break
+                secret_value="${secret_value#*$'\n'}"
+            done
+        done
+        printf '%s\n' "$log_line"
+    done | awk '
+        BEGIN { esc = sprintf("%c", 27); hiding = 0 }
+        {
+            gsub(esc "\\[[0-9;?]*[ -/]*[@-~]", "")
+            gsub(/\\[eE]\[[0-9;]*m/, "")
+            lower = tolower($0)
+            if (hiding) {
+                print "[redacted multiline sensitive value]"
+                if ($0 ~ /[\]}]/ || lower ~ /-----end .*private key-----/) hiding = 0
+                next
+            }
+            if (lower ~ /-----begin .*private key-----/) {
+                print "[redacted private key]"; hiding = 1; next
+            }
+            if (lower ~ /generate (private key|public key|shortid)|生成一个(私钥|公钥|shortid)|uuid[[:space:]]*(→|->)/) {
+                print "[redacted legacy credential output]"; next
+            }
+            if (lower ~ /(^|[^[:alnum:]_])(privatekey|private_key|private-key|publickey|public_key|public-key|password|passwd|pass|token|secret|authorization|id|users?|uuid|shortids?|short_id|pbk|sid|mldsa65seed|mldsa65verify|seed)["[:space:]]*[:=]/) {
+                if ($0 ~ /[:=][[:space:]]*$/ || ($0 ~ /[:=][[:space:]]*[\[{]/ && $0 !~ /[\]}][[:space:]]*,?[[:space:]]*$/)) hiding = 1
+                print "[redacted diagnostic containing sensitive field]"
+                next
+            }
+            gsub(/[[:alpha:]][[:alnum:]+.-]*:\/\/[^[:space:]<>"\047]+/, "[redacted-url]")
+            print
+        }
+    '
 }
 
-warn() {
-    echo -e "\n${yellow}$1${none}\n" | tee -a "$LOG_FILE"
+log_event() {
+    local event_level="$1" message="${2:-}" event_rank=1 timestamp="" clean_line="" phase_label="${nokey_phase:-main}"
+    validate_log_level || return $?
+    case "$event_level" in
+        DEBUG) event_rank=0 ;;
+        INFO) event_rank=1 ;;
+        WARN) event_rank=2 ;;
+        ERROR) event_rank=3 ;;
+        *) return 2 ;;
+    esac
+    [[ "$event_rank" -ge "$nokey_log_threshold" ]] || return 0
+    secure_output_file "$LOG_FILE" || return 1
+    nokey_run_id="${nokey_run_id:-$(date -u '+%Y%m%dT%H%M%SZ')-$$}"
+    timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    [[ "$phase_label" =~ ^[[:alnum:]_.-]+$ ]] || phase_label=unknown
+    while IFS= read -r clean_line || [[ -n "$clean_line" ]]; do
+        printf '%s [%s] run=%s phase=%s %s\n' "$timestamp" "$event_level" "$nokey_run_id" "$phase_label" "$clean_line"
+    done < <(printf '%s\n' "$message" | sanitize_log_stream) >> "$LOG_FILE"
 }
 
-info() {
-    echo -e "${yellow}$1${none}" | tee -a "$LOG_FILE"
+# stdout-only result output deliberately bypasses the diagnostic log.
+display_result() {
+    printf '%b%s%b\n' "${2:-}" "${1:-}" "$none"
 }
 
-success() {
-    echo -e "${green}$1${none}" | tee -a "$LOG_FILE"
+ui_message() {
+    local ui_level="$1" ui_color="$2" ui_text="$3"
+    display_result "$ui_text" "$ui_color"
+    log_event "$ui_level" "$ui_text"
 }
+
+error() { ui_message ERROR "$red" "$1"; }
+warn() { ui_message WARN "$yellow" "$1"; }
+info() { ui_message INFO "$yellow" "$1"; }
+success() { ui_message INFO "$green" "$1"; }
+log_info() { log_event INFO "$1"; }
+log_verbose() { log_event DEBUG "$1"; }
 
 task_start() {
-    echo -n -e "${yellow}$1 ... ${none}" | tee -a "$LOG_FILE"
+    local stack_depth="${nokey_task_depth:-0}"
+    nokey_task_label="$1"
+    nokey_task_started="$(date '+%s')"
+    nokey_task_labels[stack_depth]="$nokey_task_label"
+    nokey_task_starts[stack_depth]="$nokey_task_started"
+    nokey_task_depth=$((stack_depth + 1))
+    display_result "[...] $nokey_task_label" "$yellow"
+    log_event INFO "task_start label=$nokey_task_label"
 }
 
-task_done() {
-    echo -e "[${green}OK${none}]" | tee -a "$LOG_FILE"
+task_finish() {
+    local task_status="$1" task_level="$2" task_color="$3" task_detail="${4:-}" elapsed=0
+    local stack_depth="${nokey_task_depth:-0}" task_label=Task task_started=""
+    if [[ "$stack_depth" -gt 0 ]]; then
+        stack_depth=$((stack_depth - 1))
+        task_label="${nokey_task_labels[$stack_depth]}"
+        task_started="${nokey_task_starts[$stack_depth]}"
+        unset 'nokey_task_labels[stack_depth]' 'nokey_task_starts[stack_depth]'
+    fi
+    if [[ -n "$task_started" ]]; then
+        elapsed=$(( $(date '+%s') - task_started ))
+    fi
+    display_result "[$task_status] ${task_label}${task_detail:+: $task_detail}" "$task_color"
+    log_event "$task_level" "task_end label=${task_label} status=$task_status duration_s=$elapsed${task_detail:+ detail=$task_detail}"
+    nokey_task_depth="$stack_depth"
+    if [[ "$stack_depth" -gt 0 ]]; then
+        nokey_task_label="${nokey_task_labels[$((stack_depth - 1))]}"
+        nokey_task_started="${nokey_task_starts[$((stack_depth - 1))]}"
+    else
+        nokey_task_label=""
+        nokey_task_started=""
+    fi
 }
 
-task_done_with_info() {
-    echo -e "${cyan}$1${none} [${green}OK${none}]" | tee -a  "$LOG_FILE"
-}
+task_done() { task_finish OK INFO "$green"; }
+task_done_with_info() { task_finish OK INFO "$green" "$1"; }
+task_fail() { task_finish FAILED ERROR "$red"; }
 
-task_fail() {
-    echo -e "[${red}FAILED${none}]" | tee -a "$LOG_FILE"
-}
+# Capture command diagnostics without ever logging arguments (which may contain
+# credentials). The subshell scopes signal cleanup and preserves caller traps.
+# Use external commands or read-only functions: shell state changes stay local.
+run_logged() (
+    local nokey_phase="$1" command_status=0 started="" capture_file="" line="" capture_status=0 diagnostic_level=INFO
+    shift
+    [[ "$#" -gt 0 ]] || return 2
+    started="$(date '+%s')"
+    log_event INFO 'command_start' || return 1
+    capture_file="$(mktemp "${TMPDIR:-/tmp}/nokey-command.XXXXXX")" || return 1
+    trap 'rm -f "$capture_file"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    chmod 600 "$capture_file" || return 1
+    if "$@" > "$capture_file" 2>&1; then
+        command_status=0
+    else
+        command_status=$?
+    fi
+    [[ "$command_status" -ne 0 ]] && diagnostic_level=ERROR
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        log_event "$diagnostic_level" "diagnostic $line" || capture_status=1
+    done < <(sanitize_log_stream < "$capture_file")
+    rm -f "$capture_file"
+    if [[ "$command_status" -eq 0 ]]; then
+        log_event INFO "command_end exit=0 duration_s=$(( $(date '+%s') - started ))" || capture_status=1
+    else
+        log_event ERROR "command_end exit=$command_status duration_s=$(( $(date '+%s') - started ))" || capture_status=1
+    fi
+    [[ "$command_status" -ne 0 ]] && return "$command_status"
+    return "$capture_status"
+)
 
 print_service_commands() {
-    local systemd_service="$1"
-    local openrc_service="$2"
-    info "Restart / 重启: systemctl restart ${systemd_service}"
-    info "Status / 状态: systemctl status ${systemd_service}"
-    info "Alpine restart / Alpine重启: rc-service ${openrc_service} restart"
-    info "Alpine status / Alpine状态: rc-service ${openrc_service} status"
+    local systemd_service="$1" openrc_service="$2"
+    if [[ "${ID:-}" == alpine || "${ID_LIKE:-}" == alpine ]] || command -v rc-service >/dev/null 2>&1; then
+        info "Restart / 重启: rc-service ${openrc_service} restart"
+        info "Status / 状态: rc-service ${openrc_service} status"
+    elif command -v systemctl >/dev/null 2>&1; then
+        info "Restart / 重启: systemctl restart ${systemd_service}"
+        info "Status / 状态: systemctl status ${systemd_service}"
+    fi
 }
 
-log_verbose() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-# Verbose info → log only (not stdout)
-log_info() {
-    echo -e "${yellow}$1${none}" >> "$LOG_FILE"
-}
-
-# Simple output separator for stdout
 separator() {
-    echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${none}"
+    display_result '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' "$cyan"
 }
 
 # shellcheck disable=SC2119,SC2120  # $1 is an optional arch override (used by tests)
@@ -151,21 +328,6 @@ Restart=on-failure\
 RestartSec=5s' \
         "$service_file" > "$service_tmp" || return 1
     mv "$service_tmp" "$service_file"
-}
-
-# shellcheck disable=SC2119,SC2120  # $1 is an optional arch override (used by tests)
-resolve_singbox_arch_name() {
-    case "${1:-$(uname -m)}" in
-        x86_64|amd64)
-            echo "sing-box_amd64"
-            ;;
-        aarch64|arm64)
-            echo "sing-box_arm64"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
 }
 
 # shellcheck disable=SC2119,SC2120  # $1 is an optional arch override (used by tests)
@@ -252,7 +414,7 @@ remove_alias() {
             fi
         fi
     done
-    info "\n卸载完成 / Uninstallation complete."
+    info "卸载完成 / Uninstallation complete."
     task_done
 }
 

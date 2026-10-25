@@ -17,7 +17,10 @@ else
 fi
 
 
-. /etc/os-release
+if [[ -r /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+fi
 manager=""
 install_dependencies jq
 
@@ -197,7 +200,10 @@ ID=""
 ID_LIKE=""
 if [ -f /etc/os-release ]; then
   # shellcheck disable=SC1091
-  . /etc/os-release
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+fi
 fi
 if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
   echo "正在重启 nokey (OpenRC) ..." >&2

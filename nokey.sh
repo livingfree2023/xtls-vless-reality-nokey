@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.32"
+readonly SCRIPT_VERSION="2026.33"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -34,19 +34,11 @@ readonly GITHUB_RELEASE_BASE_URL="https://github.com/livingfree2023/nokey/releas
 readonly GITHUB_RELEASE_API_URL="https://api.github.com/repos/livingfree2023/nokey/releases/latest"
 readonly GITHUB_NOKEY_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.rc"
 readonly GITHUB_NOKEY_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.service"
-readonly GITHUB_XRAY_RC_URL="$GITHUB_NOKEY_RC_URL"
-readonly GITHUB_XRAY_SERVICE_URL="$GITHUB_NOKEY_SERVICE_URL"
 readonly GITHUB_REALM_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.rc"
 readonly GITHUB_REALM_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.service"
 readonly REALM_SERVICE_NAME="realm.service"
 readonly REALM_SERVICE_NAME_ALPINE="realm"
 readonly REALM_CONFIG_DIR="/usr/local/etc/realm"
-# Sing-box constants
-readonly SINGBOX_SERVICE_NAME="sing-box.service"
-readonly SINGBOX_SERVICE_NAME_ALPINE="sing-box"
-readonly GITHUB_SINGBOX_SERVICE_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/sing-box.service"
-readonly GITHUB_SINGBOX_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/sing-box.rc"
-readonly SINGBOX_CONFIG_DIR="/etc/sing-box"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${script_dir}/nokey-common.sh" ]]; then
@@ -95,67 +87,23 @@ realm_only=0
 realm_remote=""
 realm_listen=""
 
-# --singbox installs alongside Xray; --singbox-only suppresses the Xray path.
-sing_box_mode=0
-sing_box_only=0
-# Output helpers use a separate context so the requested install mode stays immutable.
-result_sing_box_mode=0
 menu_mode=0
+default_route_mode=0
+default_route_choice=""
+egress_ipv4_available=""
+egress_ipv6_available=""
+default_outbound_json=""
+dns_servers_json=""
+dns_query_strategy=""
+pending_xray_config=""
+last_config_backup=""
+runtime_xray_service="$SERVICE_NAME"
+runtime_xray_service_alpine="$SERVICE_NAME_ALPINE"
 
 # Last REALITY probe latency in ms (set by probe_reality_target; read by pick_default_domain)
 probe_latency_ms=""
 
-init_output_files() {
-    : > "$LOG_FILE"
-    : > "$URL_FILE"
-}
-
-# Helper functions
-error() {
-    echo -e "\n${red}$1${none}\n" | tee -a "$LOG_FILE"
-}
-
-warn() {
-    echo -e "\n${yellow}$1${none}\n" | tee -a "$LOG_FILE"
-}
-
-info() {
-    echo -e "${yellow}$1${none}" | tee -a "$LOG_FILE"
-}
-
-success() {
-    echo -e "${green}$1${none}" | tee -a "$LOG_FILE"
-}
-
-task_start() {
-    echo -n -e "${yellow}$1 ... ${none}" | tee -a "$LOG_FILE"
-}
-
-task_done() {
-    echo -e "[${green}OK${none}]" | tee -a "$LOG_FILE"
-}
-
-task_done_with_info() {
-    echo -e "${cyan}$1${none} [${green}OK${none}]" | tee -a  "$LOG_FILE"
-}
-
-task_fail() {
-    echo -e "[${red}FAILED${none}]" | tee -a "$LOG_FILE"
-}
-
-log_verbose() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-# Verbose info → log only (not stdout)
-log_info() {
-    echo -e "${yellow}$1${none}" >> "$LOG_FILE"
-}
-
-# Simple output separator for stdout
-separator() {
-    echo -e "${cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${none}"
-}
+# Shared output and logging helpers are loaded from nokey-common.sh.
 
 # shellcheck disable=SC2119,SC2120  # $1 is an optional arch override (used by tests)
 resolve_arch_binary_name() {
@@ -224,21 +172,6 @@ Restart=on-failure\
 RestartSec=5s' \
         "$service_file" > "$service_tmp" || return 1
     mv "$service_tmp" "$service_file"
-}
-
-# shellcheck disable=SC2119,SC2120  # $1 is an optional arch override (used by tests)
-resolve_singbox_arch_name() {
-    case "${1:-$(uname -m)}" in
-        x86_64|amd64)
-            echo "sing-box_amd64"
-            ;;
-        aarch64|arm64)
-            echo "sing-box_arm64"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
 }
 
 # shellcheck disable=SC2119,SC2120  # $1 is an optional arch override (used by tests)
@@ -319,13 +252,13 @@ remove_alias() {
             if grep -Fxq "$alias_line" "$file"; then
                 cp -p "$file" "$file.bak"
                 grep -vF "$alias_line" "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-                echo "已从 $file 移除别名 (备份: $file.bak) / Removed alias from $file (backup created as $file.bak)"
+                info "已从 $file 移除别名 (备份: $file.bak) / Removed alias from $file (backup created as $file.bak)"
             else
-                echo "$file 中未找到别名 / Alias not found in $file"
+                info "$file 中未找到别名 / Alias not found in $file"
             fi
         fi
     done
-    info "\n卸载完成 / Uninstallation complete."
+    info "卸载完成 / Uninstallation complete."
     task_done
 }
 
@@ -340,7 +273,7 @@ detect_network_interfaces() {
 
     [[ -n "$Public_IPv4" ]] && IPv4="$Public_IPv4"
     [[ -n "$Public_IPv6" ]] && IPv6="$Public_IPv6"
-    echo "Detected interface / 找到网卡: $Public_IPv4 $Public_IPv6" >> "$LOG_FILE"
+    log_info "event=network_addresses ipv4_present=$([[ -n "$Public_IPv4" ]] && printf yes || printf no) ipv6_present=$([[ -n "$Public_IPv6" ]] && printf yes || printf no)"
 }
 
 detect_caddy_config() {
@@ -627,33 +560,22 @@ install_dependencies() {
     # Callers may request mode-specific tools (for example jq for atomic JSON patches).
     local tools=("curl" "netstat" "$@")
 
-    declare -A os_package_command=(
-        [apt]="apt install -y"
-        [yum]="yum install -y"
-        [dnf]="dnf install -y"
-        [pacman]="pacman -Sy --noconfirm"
-        [apk]="apk add --no-cache"
-        [zypper]="zypper install -y"
-        [xbps-install]="xbps-install -Sy"
-    )
-
-    # Fallback detection using which
-    if [[ -z "$manager" ]]; then
-        for candidate in "${!os_package_command[@]}"; do
-            if command -v "$candidate" > /dev/null 2>&1; then
-                manager=$candidate
-                # info "\nfound manager $manager in fallback"
-                break
-            fi
+    if [[ -z "${manager:-}" ]]; then
+        for candidate in apt yum dnf pacman apk zypper xbps-install; do
+            if command -v "$candidate" >/dev/null 2>&1; then manager="$candidate"; break; fi
         done
     fi
-
-    if [[ -z "$manager" ]]; then
-        error "无法识别包管理器 / Cannot detect package manager"
-        return 1
-    fi
-
-    local install_cmd="${os_package_command[$manager]}"
+    local install_cmd=""
+    case "${manager:-}" in
+        apt) install_cmd="apt install -y" ;;
+        yum) install_cmd="yum install -y" ;;
+        dnf) install_cmd="dnf install -y" ;;
+        pacman) install_cmd="pacman -Sy --noconfirm" ;;
+        apk) install_cmd="apk add --no-cache" ;;
+        zypper) install_cmd="zypper install -y" ;;
+        xbps-install) install_cmd="xbps-install -Sy" ;;
+        *) error "无法识别包管理器 / Cannot detect package manager"; return 1 ;;
+    esac
 
     # Check for missing tools
     for tool in "${tools[@]}"; do
@@ -669,7 +591,7 @@ install_dependencies() {
                     package_name="lsof"
                     ;;
             esac
-            eval "$install_cmd" "$package_name"  >> "$LOG_FILE" 2>&1
+            run_logged dependency_install eval "$install_cmd" "$package_name" || { task_fail; return 1; }
             if ! command -v "$tool" > /dev/null 2>&1; then
                 task_fail
                 error "安装$tool失败，请手动安装后重新运行脚本 / Failed to install '$tool'. Please install it manually and re-run the script."
@@ -677,7 +599,7 @@ install_dependencies() {
             fi
         fi
     done
-    
+
     task_done
 
 }
@@ -753,11 +675,21 @@ validate_addsocks_conflicts() {
     fi
 }
 
+configure_xray_service_identity() {
+    runtime_xray_service="$SERVICE_NAME"
+    runtime_xray_service_alpine="$SERVICE_NAME_ALPINE"
+    if [[ "$xray_config_path" == /usr/local/etc/xray/config.json ]]; then
+        runtime_xray_service=xray.service
+        runtime_xray_service_alpine=xray
+    fi
+}
+
 xray_service_is_active() {
-    if [ "${ID:-}" = "alpine" ] || [ "${ID_LIKE:-}" = "alpine" ]; then
-        rc-service "$SERVICE_NAME_ALPINE" status >/dev/null 2>&1
+    configure_xray_service_identity
+    if [[ "${ID:-}" == alpine || "${ID_LIKE:-}" == alpine ]]; then
+        rc-service "$runtime_xray_service_alpine" status >/dev/null 2>&1
     else
-        systemctl is-active --quiet "$SERVICE_NAME"
+        systemctl is-active --quiet "$runtime_xray_service"
     fi
 }
 
@@ -941,20 +873,7 @@ load_runtime_vars_from_existing_config() {
             error "配置文件格式无效 / Invalid config format in $config_path."
             error "jq(原始): ${jq_error}"
             error "jq(去注释): ${stripped_error}"
-            error "提示：修复所报行附近的语法问题，下面是原始配置文件附近的行 / Tip: remove syntax issues near the reported line/column. Showing nearby lines from original config:"
-
-            local line_no
-            line_no="$(echo "$jq_error" | sed -nE 's/.*line ([0-9]+), column.*/\1/p' | head -n1)"
-            if [[ -n "$line_no" ]]; then
-                local start_line=$((line_no - 2))
-                local end_line=$((line_no + 2))
-                if [[ $start_line -lt 1 ]]; then
-                    start_line=1
-                fi
-                nl -ba "$config_path" | sed -n "${start_line},${end_line}p" | tee -a "$LOG_FILE"
-            else
-                nl -ba "$config_path" | sed -n '1,40p' | tee -a "$LOG_FILE"
-            fi
+            error "请检查所报行附近的配置语法，配置内容不会写入日志 / Check syntax near the reported line; config contents are not logged."
 
             rm -f "$jsonc_tmp" /tmp/nokey-jq-raw.err /tmp/nokey-jq-stripped.err >/dev/null 2>&1 || true
             exit 1
@@ -1021,7 +940,7 @@ load_runtime_vars_from_existing_config() {
         mldsa65Verify=""
     fi
     rm -f "$jsonc_tmp" /tmp/nokey-jq-raw.err /tmp/nokey-jq-stripped.err >/dev/null 2>&1 || true
-    task_done_with_info "port=${port}, domain=${domain}, uuid=${uuid}"
+    task_done_with_info "port=${port}, credentials=loaded"
 }
 
 cleanup_legacy_xray_access_log() {
@@ -1043,12 +962,8 @@ install_xray() {
 
     task_start "开始，安装或升级XRAY / Install or upgrade XRAY"
 
-    # 如果xray已在运行，先停掉，否则二进制文件被锁无法覆写
-    if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-        rc-service "$SERVICE_NAME_ALPINE" stop 2>/dev/null || true
-    else
-        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-    fi
+    # Keep the running process intact until a validated configuration is ready.
+    configure_xray_service_identity
     cleanup_legacy_xray_access_log || { task_fail; error "清理旧Xray访问日志失败 / Failed to clean legacy Xray access log"; exit 1; }
 
     local arch_binary_name=""
@@ -1057,21 +972,39 @@ install_xray() {
     arch_name="$(resolve_arch_name)" || { task_fail; error "不支持的架构: $(uname -m)，仅支持amd64和arm64 / Unsupported architecture: $(uname -m). Only amd64 and arm64 are supported."; exit 1; }
 
     log_info "检测到系统 / Detected OS: $(resolve_os_family) | 架构 / Architecture: ${arch_name}"
-    
+
     mkdir -p /usr/local/bin "$XRAY_ASSET_DIR" "$NOKEY_CONFIG_DIR" || { task_fail; error "创建nokey目录失败 / Failed to create nokey directories"; exit 1; }
     log_verbose "Created install directories under /usr/local"
 
     if xray_binary_needs_download "$arch_binary_name"; then
         log_info "正在从GitHub Releases下载xray二进制文件 / Downloading xray binary from GitHub Releases"
         log_verbose "Downloading: ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/xray"
-        curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}" -o /usr/local/bin/xray >> "$LOG_FILE" 2>&1 || { task_fail; error "下载${arch_binary_name}失败 / Failed to download ${arch_binary_name}"; exit 1; }
-        chmod 755 /usr/local/bin/xray
-        log_verbose "Set executable permissions on /usr/local/bin/xray"
+        local binary_stage=""
+        local binary_version=""
+        binary_stage="$(mktemp /usr/local/bin/xray.stage.XXXXXX)" || return 1
+        if ! run_logged binary_download curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}" -o "$binary_stage" || ! chmod 755 "$binary_stage"; then
+            rm -f "$binary_stage"
+            task_fail
+            return 1
+        fi
+        binary_version="$("$binary_stage" version 2>/dev/null)" || { rm -f "$binary_stage"; task_fail; return 1; }
+        case "$binary_version" in
+            Xray\ *) ;;
+            *) rm -f "$binary_stage"; task_fail; error "下载的Xray无法通过版本校验 / Downloaded Xray failed version validation."; return 1 ;;
+        esac
+        mv -f "$binary_stage" /usr/local/bin/xray || { rm -f "$binary_stage"; return 1; }
+        log_info "event=binary_updated version=$(printf '%s' "$binary_version" | head -n 1)"
     fi
     update_xray_data_file "geoip.dat" "SHA256-geoip.dat" || exit 1
     update_xray_data_file "geosite.dat" "SHA256-geosite.dat" || exit 1
     normalize_xray_runtime_permissions || { task_fail; error "设置Xray运行时文件权限失败 / Failed to set Xray runtime file permissions"; exit 1; }
 
+    # A preserved conventional Xray configuration keeps its existing service.
+    if [[ "$runtime_xray_service" == xray.service ]]; then
+        log_info "event=service_preserved service=xray"
+        task_done
+        return 0
+    fi
     local nokey_rc_tmp
     local nokey_service_tmp
     nokey_rc_tmp="$(mktemp /tmp/nokey.rc.XXXXXX)" || { task_fail; error "创建nokey.rc临时文件失败 / Failed to create temporary file for nokey.rc"; exit 1; }
@@ -1080,7 +1013,7 @@ install_xray() {
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
         log_info "安装OpenRC服务 / Installing OpenRC service: /etc/init.d/${SERVICE_NAME_ALPINE}"
         log_verbose "Downloading service file: ${GITHUB_NOKEY_RC_URL} -> ${nokey_rc_tmp}"
-        curl -fSL "${GITHUB_NOKEY_RC_URL}" -o "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载nokey.rc失败 / Failed to download nokey.rc"; exit 1; }
+        run_logged download curl -fSL "${GITHUB_NOKEY_RC_URL}" -o "${nokey_rc_tmp}" || { task_fail; error "下载nokey.rc失败 / Failed to download nokey.rc"; exit 1; }
         configure_openrc_crash_restart "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置nokey崩溃自动重启失败 / Failed to configure nokey crash restart"; exit 1; }
         install -m 755 "${nokey_rc_tmp}" /etc/init.d/"$SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "安装/etc/init.d/$SERVICE_NAME_ALPINE失败 / Failed to install /etc/init.d/$SERVICE_NAME_ALPINE"; exit 1; }
         rm -f "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1
@@ -1095,7 +1028,7 @@ install_xray() {
     else
         log_info "安装systemd服务 / Installing systemd service: /etc/systemd/system/${SERVICE_NAME}"
         log_verbose "Downloading service file: ${GITHUB_NOKEY_SERVICE_URL} -> ${nokey_service_tmp}"
-        curl -fSL "${GITHUB_NOKEY_SERVICE_URL}" -o "${nokey_service_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载nokey.service失败 / Failed to download nokey.service"; exit 1; }
+        run_logged download curl -fSL "${GITHUB_NOKEY_SERVICE_URL}" -o "${nokey_service_tmp}" || { task_fail; error "下载nokey.service失败 / Failed to download nokey.service"; exit 1; }
         # shellcheck disable=SC2016
         sed -e "s/\\\$INSTALL_USER/${XRAY_SERVICE_USER}/g" \
             -e '/\${temp_CapabilityBoundingSet}/d' \
@@ -1120,323 +1053,9 @@ install_xray() {
 
 }
 
-install_singbox() {
-    if [[ $force_reinstall == 1 ]]; then
-      uninstall_singbox
-    fi
-    
-    task_start "开始，安装或升级Sing-box / Install or upgrade Sing-box"
-    
-    # Detect OS type (similar to install-singbox.sh)
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS_ID="${ID:-}"
-        OS_ID_LIKE="${ID_LIKE:-}"
-    else
-        OS_ID=""
-        OS_ID_LIKE=""
-    fi
-
-    if echo "$OS_ID $OS_ID_LIKE" | grep -qi "alpine"; then
-        OS="alpine"
-    elif echo "$OS_ID $OS_ID_LIKE" | grep -Ei "debian|ubuntu" >/dev/null; then
-        OS="debian"
-    elif echo "$OS_ID $OS_ID_LIKE" | grep -Ei "centos|rhel|fedora" >/dev/null; then
-        OS="redhat"
-    else
-        OS="unknown"
-    fi
-
-    log_info "检测到系统 / Detected OS: $OS (${OS_ID:-unknown})"
-    
-    # Check root privileges
-    if [[ $dry_run -eq 1 ]]; then
-        return
-    fi
-    if [ "$EUID" -ne 0 ]; then
-        error "请以root身份运行此脚本 / Please run as root: ${red}sudo -i${none}"
-        exit 1
-    fi
-    
-    # Install dependencies based on OS
-    task_start "安装系统依赖 / Installing system dependencies"
-    
-    case "$OS" in
-        alpine)
-            apk update >> "$LOG_FILE" 2>&1 || { task_fail; error "apk update 失败"; exit 1; }
-            apk add --no-cache bash curl ca-certificates openssl openrc >> "$LOG_FILE" 2>&1 || {
-                task_fail; error "依赖安装失败"; exit 1
-            }
-            
-            # 确保 OpenRC 运行
-            if ! rc-service --list 2>/dev/null | grep -q "^openrc"; then
-                rc-update add openrc boot >/dev/null 2>&1 || true
-                rc-service openrc start >/dev/null 2>&1 || true
-            fi
-            ;;
-        debian)
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -y >> "$LOG_FILE" 2>&1 || { task_fail; error "apt update 失败"; exit 1; }
-            apt-get install -y curl ca-certificates openssl >> "$LOG_FILE" 2>&1 || {
-                task_fail; error "依赖安装失败"; exit 1
-            }
-            ;;
-        redhat)
-            yum install -y curl ca-certificates openssl >> "$LOG_FILE" 2>&1 || {
-                task_fail; error "依赖安装失败"; exit 1
-            }
-            ;;
-        *)
-            warn "未识别的系统类型，尝试继续..."
-            ;;
-    esac
-    
-    task_done
-    
-    # For sing-box, we'll use default values similar to install-singbox.sh
-    # Generate random port if not set (prefer 443 when free or owned by sing-box)
-    if [[ -z $port ]]; then
-        if is_port_reusable 443 sing-box "$SINGBOX_SERVICE_NAME" "$SINGBOX_SERVICE_NAME_ALPINE"; then
-            port=443
-        else
-            if ! select_random_unused_port; then
-                task_fail
-                error "没有找到可用的Sing-box端口 / Could not find an unused Sing-box port."
-                exit 1
-            fi
-            port="$random_unused_port"
-        fi
-        log_info "使用端口: $port"
-    fi
-    
-    # Generate UUID if not set (sing-box VLESS uses standard UUID format)
-    if [[ -z $uuid ]]; then
-        uuid=$(generate_uuid)
-        log_info "自动生成UUID / Auto-generated UUID"
-    fi
-    
-    # Default domain if not set
-    if [[ -z $domain ]]; then
-        pick_default_domain || true
-    fi
-    
-    # Install sing-box binary
-    log_info "正在从GitHub Releases下载sing-box二进制文件 / Downloading sing-box binary from GitHub Releases"
-
-    # Determine architecture and download appropriate sing-box binary
-    local arch_binary_name=""
-    local arch_name=""
-    arch_binary_name="$(resolve_singbox_arch_name)" || { task_fail; error "不支持的架构: $(uname -m)，仅支持amd64和arm64 / Unsupported architecture: $(uname -m). Only amd64 and arm64 are supported."; exit 1; }
-    arch_name="$(resolve_arch_name)" || { task_fail; error "不支持的架构: $(uname -m)，仅支持amd64和arm64 / Unsupported architecture: $(uname -m). Only amd64 and arm64 are supported."; exit 1; }
-    
-    log_info "检测到系统 / Detected OS: $(resolve_os_family) | 架构 / Architecture: ${arch_name}"
-    
-    mkdir -p /usr/local/bin || { task_fail; error "创建sing-box目录失败 / Failed to create sing-box directories"; exit 1; }
-    log_verbose "Created install directories under /usr/local"
-    
-    local download_url="${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}"
-    log_verbose "Downloading: ${download_url} -> /usr/local/bin/sing-box"
-    if curl -fSL "$download_url" -o /usr/local/bin/sing-box >> "$LOG_FILE" 2>&1; then
-        chmod 755 /usr/local/bin/sing-box
-        log_verbose "Set executable permissions on /usr/local/bin/sing-box"
-        if ! /usr/local/bin/sing-box version >/dev/null 2>&1; then
-            warn "下载的二进制无法执行(glibc/musl不兼容)，回退到apk安装 / Downloaded binary cannot execute (glibc/musl mismatch); fallback to apk"
-            rm -f /usr/local/bin/sing-box
-            if [[ "$OS" == "alpine" ]]; then
-                apk add --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community sing-box >> "$LOG_FILE" 2>&1 || {
-                    task_fail; error "通过apk安装sing-box失败 / Failed to install sing-box via apk"; exit 1;
-                }
-            else
-                task_fail; error "下载的sing-box二进制文件无法执行 / Downloaded sing-box binary cannot execute"; exit 1;
-            fi
-        fi
-    else
-        warn "从Release下载sing-box失败，回退到官方安装脚本 / Failed to download sing-box from Release; fallback to official installer"
-        # Fallback to official sing-box installer
-        if [[ "$OS" == "alpine" ]]; then
-            apk add --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community sing-box >> "$LOG_FILE" 2>&1 || {
-                task_fail; error "通过apk安装sing-box失败 / Failed to install sing-box via apk"; exit 1;
-            }
-        else
-            bash <(curl -fsSL https://sing-box.app/install.sh) >> "$LOG_FILE" 2>&1 || {
-                task_fail; error "通过官方脚本安装sing-box失败 / Failed to install sing-box via official script"; exit 1;
-            }
-        fi
-    fi
-    
-    # Create configuration directory and file
-    mkdir -p "$SINGBOX_CONFIG_DIR" || { task_fail; error "创建sing-box配置目录失败 / Failed to create sing-box config directory"; exit 1; }
-    
-    # Generate Reality keypair using sing-box
-    task_start "生成Reality密钥对 / Generate Reality Key Pair"
-    keys=$(sing-box generate reality-keypair 2>>"$LOG_FILE")
-    if [[ -z "$keys" ]]; then
-        task_fail
-        error "生成Reality密钥失败，sing-box是否安装正确？ / Failed to generate Reality keys. Is sing-box installed correctly?"
-        exit 1
-    fi
-    private_key=$(extract_private_key_from_x25519_output "$keys")
-    public_key=$(extract_public_key_from_x25519_output "$keys")
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
-        task_fail
-        error "无法解析Reality密钥 / Failed to parse Reality keys"
-        exit 1
-    fi
-    task_done_with_info "${public_key}"
-    
-    # Generate shortid if not set
-    task_start "生成shortid / Generate shortid"
-    if [[ -z $shortid ]]; then
-        shortid=$(generate_shortid)
-    fi
-    task_done_with_info "${shortid}"
-    
-    # Generate sing-box config (VLESS Reality Vision)
-    local config_path="${SINGBOX_CONFIG_DIR}/config.json"
-    cat > "$config_path" <<EOF
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "vless",
-      "tag": "vless-in",
-      "listen_port": $port,
-      "users": [
-        {
-          "name": "nokey",
-          "uuid": "$uuid",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "server_name": "$domain",
-        "alpn": ["h2", "http/1.1"],
-        "reality": {
-          "enabled": true,
-          "handshake": {
-            "server": "$domain",
-            "server_port": 443
-          },
-          "private_key": "$private_key",
-          "short_id": ["$shortid"],
-          "max_time_difference": "1m"
-        }
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct-out"
-    }
-  ]
-}
-EOF
-    
-    # Validate configuration if sing-box is available
-    if command -v sing-box >/dev/null 2>&1; then
-        if sing-box check -c "$config_path" >/dev/null 2>&1; then
-            info "配置文件验证通过 / Config file validation passed"
-        else
-            warn "配置文件验证失败，但将继续... / Config file validation failed, but continuing..."
-        fi
-    fi
-    
-    # Setup service (if not already installed by package manager)
-    if [[ ! -f "/etc/init.d/$SINGBOX_SERVICE_NAME_ALPINE" && ! -f "/etc/systemd/system/$SINGBOX_SERVICE_NAME" ]]; then
-        local service_tmp
-        service_tmp="$(mktemp /tmp/nokey.sing-box.service.XXXXXX)" || { task_fail; error "创建sing-box.service临时文件失败 / Failed to create temporary file for sing-box.service"; exit 1; }
-        
-        if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-            log_info "安装OpenRC服务 / Installing OpenRC service: /etc/init.d/${SINGBOX_SERVICE_NAME_ALPINE}"
-            log_verbose "Downloading service file: ${GITHUB_SINGBOX_RC_URL} -> ${service_tmp}"
-            if curl -fSL "${GITHUB_SINGBOX_RC_URL}" -o "${service_tmp}" >> "$LOG_FILE" 2>&1; then
-                if ! install -m 755 "${service_tmp}" /etc/init.d/"$SINGBOX_SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1; then
-                    task_fail
-                    error "安装sing-box OpenRC服务失败 / Failed to install sing-box OpenRC service"
-                    exit 1
-                fi
-                rm -f "${service_tmp}" >> "$LOG_FILE" 2>&1
-                log_verbose "Installed OpenRC service file from sing-box.rc"
-                rc-update add "$SINGBOX_SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || warn "添加sing-box开机自启失败 / Failed to add sing-box to startup"
-            else
-                warn "下载sing-box.rc失败，服务可能已被包管理器安装 / Failed to download sing-box.rc; service may already be installed by package manager"
-                rm -f "${service_tmp}" >> "$LOG_FILE" 2>&1
-            fi
-        else
-            log_info "安装systemd服务 / Installing systemd service: /etc/systemd/system/${SINGBOX_SERVICE_NAME}"
-            log_verbose "Downloading service file: ${GITHUB_SINGBOX_SERVICE_URL} -> ${service_tmp}"
-            if curl -fSL "${GITHUB_SINGBOX_SERVICE_URL}" -o "${service_tmp}" >> "$LOG_FILE" 2>&1; then
-                if ! cp "${service_tmp}" /etc/systemd/system/"$SINGBOX_SERVICE_NAME" >> "$LOG_FILE" 2>&1; then
-                    task_fail
-                    error "安装sing-box systemd服务失败 / Failed to install sing-box systemd service"
-                    exit 1
-                fi
-                rm -f "${service_tmp}" >> "$LOG_FILE" 2>&1
-                log_verbose "Installed systemd service file from sing-box.service"
-                systemctl daemon-reload >> "$LOG_FILE" 2>&1 || true
-                systemctl enable "$SINGBOX_SERVICE_NAME" >> "$LOG_FILE" 2>&1 || warn "启用sing-box服务失败 / Failed to enable sing-box service"
-            else
-                warn "下载sing-box.service失败，服务可能已被包管理器安装 / Failed to download sing-box.service; service may already be installed by package manager"
-                rm -f "${service_tmp}" >> "$LOG_FILE" 2>&1
-            fi
-        fi
-    else
-        info "服务文件已存在，跳过服务安装 / Service file already exists, skipping service setup"
-    fi
-
-    if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-        configure_openrc_crash_restart /etc/init.d/"$SINGBOX_SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置sing-box崩溃自动重启失败 / Failed to configure sing-box crash restart"; exit 1; }
-    else
-        configure_systemd_crash_restart /etc/systemd/system/"$SINGBOX_SERVICE_NAME" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置sing-box崩溃自动重启失败 / Failed to configure sing-box crash restart"; exit 1; }
-        systemctl daemon-reload >> "$LOG_FILE" 2>&1 || { task_fail; error "systemctl daemon-reload失败 / systemctl daemon-reload failed"; exit 1; }
-    fi
-    
-    # Restart sing-box to pick up the new config
-    task_start "启动Sing-box服务 / Starting Sing-box Service"
-    if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-        if rc-service "$SINGBOX_SERVICE_NAME_ALPINE" restart >> "$LOG_FILE" 2>&1; then
-            task_done
-        else
-            warn "重启Sing-box服务失败，请手动启动 / Failed to restart sing-box service, please start manually"
-            task_done
-        fi
-    else
-        if systemctl restart "$SINGBOX_SERVICE_NAME" >> "$LOG_FILE" 2>&1; then
-            task_done
-        else
-            warn "重启Sing-box服务失败，请手动启动 / Failed to restart sing-box service, please start manually"
-            task_done
-        fi
-    fi
-}
-
-uninstall_singbox() {
-    task_start "卸载 Sing-box / Uninstall Sing-box"
-    {
-        if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-            rc-service "$SINGBOX_SERVICE_NAME_ALPINE" stop 2>/dev/null || true
-            rc-update del "$SINGBOX_SERVICE_NAME_ALPINE" 2>/dev/null || true
-            rm -f "/etc/init.d/$SINGBOX_SERVICE_NAME_ALPINE"
-        else
-            systemctl stop "$SINGBOX_SERVICE_NAME" 2>/dev/null || true
-            systemctl disable "$SINGBOX_SERVICE_NAME" 2>/dev/null || true
-            rm -f "/etc/systemd/system/$SINGBOX_SERVICE_NAME" 2>/dev/null || true
-            systemctl daemon-reload 2>/dev/null || true
-        fi
-        rm -f /usr/local/bin/sing-box
-        rm -rf "$SINGBOX_CONFIG_DIR"
-    } >> "$LOG_FILE" 2>&1
-    task_done
-}
-
 uninstall_in_alpine() {
    {
-     rc-service "$SERVICE_NAME_ALPINE" stop 2>/dev/null || true
+     run_logged service_stop rc-service "$SERVICE_NAME_ALPINE" stop || true
      rc-update del "$SERVICE_NAME_ALPINE" 2>/dev/null || true
      rm -rf "/usr/local/bin/xray"
      rm -rf "/usr/local/share/xray"
@@ -1451,13 +1070,13 @@ uninstall_in_alpine() {
 uninstall_xray() {
 # Check if geodata files exist and are recent (less than 1 week old)
     task_start "什么？要卸载重装？ / Force Reinstall"
-    
+
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-      info "\nAlpine系统：卸载nokey / Alpine OS: uninstall nokey"
+      info "Alpine系统：卸载nokey / Alpine OS: uninstall nokey"
       uninstall_in_alpine
     else
       {
-        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        run_logged service_stop systemctl stop "$SERVICE_NAME" || true
         systemctl disable "$SERVICE_NAME" 2>/dev/null || true
         rm -f /etc/systemd/system/"$SERVICE_NAME"
         systemctl stop xray.service 2>/dev/null || true
@@ -1468,7 +1087,7 @@ uninstall_xray() {
         rm -rf "/usr/local/share/xray"
         rm -rf "$NOKEY_CONFIG_DIR"
       } >> "$LOG_FILE" 2>&1
-    fi 
+    fi
 
     task_done
 
@@ -1518,24 +1137,9 @@ enable_bbr() {
 }
 
 show_banner() {
-    echo -e "      ___         ___         ___         ___               "
-    echo -e "     /__/\\       /  /\\       /__/|       /  /\\        ___   "
-    echo -e "     \\  \\:\\     /  /::\\     |  |:|      /  /:/_      /__/|  "
-    echo -e "      \\  \\:\\   /  /:/\\:\\    |  |:|     /  /:/ /\\    |  |:|  "
-    echo -e "  _____\\__\\:\\ /  /:/  \\:\\ __|  |:|    /  /:/ /:/_   |  |:|  "
-    echo -e " /__/::::::::/__/:/ \\__\\:/__/\_|:|___/__/:/ /:/ /\\__|__|:|  "
-    echo -e " \\  \\:\\~~\\~~\\\\  \\:\\ /  /:\\  \\:\\/:::::\\  \\:\\/:/ /:/__/::::\\  "
-    echo -e "  \\  \\:\\  ~~~ \\  \\:\\  /:/ \\  \\::/~~~~ \\  \\::/ /:/   ~\\~~\\:\\ "
-    echo -e "   \\  \\:\\      \\  \\:\\/:/   \\  \\:\\      \\  \\:\\/:/      \\  \\:\\"
-    echo -e "    \\  \\:\\      \\  \\::/     \\  \\:\\      \\  \\::/        \\__\\/"
-    echo -e "     \\__\\/       \\__\\/       \\__\\/       \\__\\/              "
-
-
-
-    echo "项目地址，欢迎点点点点星 / STAR ME PLEEEEEAAAASE"
-    echo -e "${cyan}$GITHUB_URL${none}"
-    echo -e "支持带参数执行，不带参数直接无敌 / Supports parameters, no params just works — see ${cyan}--help${none}"
-
+    display_result "NoKey · Xray VLESS REALITY" "$cyan"
+    display_result "版本 / Version: $SCRIPT_VERSION"
+    display_result "$GITHUB_URL"
 }
 
 parse_args() {
@@ -1601,12 +1205,20 @@ parse_args() {
             realm_mode=1
             realm_only=1
             ;;
-        --singbox)
-            sing_box_mode=1
+        --singbox|--singbox-only)
+            display_result "Sing-box已移除 / Sing-box support has been removed." >&2
+            exit 1
             ;;
-        --singbox-only)
-            sing_box_mode=1
-            sing_box_only=1
+        --default-route)
+            default_route_mode=1
+            ;;
+        --default-route=*)
+            default_route_mode=1
+            default_route_choice="${arg#*=}"
+            case "$default_route_choice" in
+                4|6) ;;
+                *) display_result "--default-route仅支持4或6 / Use --default-route=4|6." >&2; exit 1 ;;
+            esac
             ;;
         --remote=*)
             realm_remote="${arg#*=}"
@@ -1649,6 +1261,10 @@ parse_args() {
     validate_keepconfig_conflicts
     validate_patch_mode_conflicts
     validate_addsocks_conflicts
+    if [[ "$default_route_mode" -eq 1 && ( "$remove_mode" -eq 1 || "$keepconfig" -eq 1 || "$realm_only" -eq 1 || "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 || "$addsocks_mode" -eq 1 || "$menu_mode" -eq 1 ) ]]; then
+        display_result "--default-route与当前参数冲突 / --default-route conflicts with the selected mode." >&2
+        exit 1
+    fi
 
      if [[ $realm_mode -eq 1 ]]; then
          if [[ -z "$realm_remote" ]]; then
@@ -1662,7 +1278,7 @@ parse_args() {
              exit 1
          fi
      fi
-     
+
 }
 
 run_feature_script() {
@@ -1693,17 +1309,17 @@ show_feature_menu() {
     fi
 
     while true; do
-        echo ""
-        echo "NoKey menu"
-        echo "1) Install Xray VLESS Reality"
-        echo "2) Install Realm"
-        echo "3) Add Xray SOCKS5"
-        echo "4) Configure Xray WARP"
-        echo "5) Install Sing-box VLESS Reality"
-        echo "6) Enable BBR"
-        echo "7) Get SSL certificate with acme.sh"
-        echo "8) Install Hysteria2 server"
-        echo "9) Exit"
+        display_result ""
+        display_result "NoKey menu"
+        display_result "1) Install Xray VLESS Reality"
+        display_result "2) Install Realm"
+        display_result "3) Add Xray SOCKS5"
+        display_result "4) Configure Xray WARP"
+        display_result "5) 选择默认出口 / Default egress"
+        display_result "6) Enable BBR"
+        display_result "7) Get SSL certificate with acme.sh"
+        display_result "8) Install Hysteria2 server"
+        display_result "0) 退出 / Exit"
         read -r -p "Select an option: " choice <&3 || break
         case "$choice" in
             1) run_feature_script nokey.sh; break ;;
@@ -1719,7 +1335,7 @@ show_feature_menu() {
                 ;;
             3) run_feature_script xray-socks.sh; break ;;
             4) run_feature_script xray-warp.sh; break ;;
-            5) run_feature_script singbox.sh; break ;;
+            5) run_feature_script nokey.sh --default-route; break ;;
             6) run_feature_script bbr.sh; break ;;
             7)
                 read -r -p "Certificate domain: " acme_domain <&3
@@ -1747,7 +1363,7 @@ show_feature_menu() {
                 unset HYSTERIA_CF_TOKEN
                 break
                 ;;
-            9) break ;;
+            0) break ;;
             *) warn "Invalid menu choice / 无效选择" ;;
         esac
     done
@@ -1907,7 +1523,7 @@ initialize_variables() {
     fi
     task_done_with_info "$port"
 
-    # Default domain if not set (auto-scan SNI; both sing-box and xray modes)
+    # Default domain if not set (auto-scan SNI).
     if [[ -z $domain ]]; then
         pick_default_domain || true
     else
@@ -1922,7 +1538,7 @@ generate_crypto() {
     fi
     task_done
 
-    
+
     if [[ -z $private_key ]]; then
       local x25519_status=0
       keys=$(xray x25519 2>>"$LOG_FILE") || x25519_status=$?
@@ -1943,7 +1559,7 @@ generate_crypto() {
         error "无法从x25519输出解析私钥 / Failed to parse PrivateKey from x25519 output."
         exit 1
       fi
-      task_done_with_info "${private_key}"
+      task_done
       task_start "生成一个公钥 / Generate Public Key"
       public_key=$(extract_public_key_from_x25519_output "$keys")
       if [[ -z "$public_key" ]]; then
@@ -1951,13 +1567,13 @@ generate_crypto() {
         error "无法从x25519输出解析公钥 / Failed to parse PublicKey from x25519 output."
         exit 1
       fi
-      task_done_with_info "${public_key}"
+      task_done
     fi
 
     task_start "生成一个shortid / Generate shortid"
     if [[ -z $shortid ]]; then
       shortid=$(generate_shortid)
-      task_done_with_info "${shortid}" 
+      task_done
     fi
 
 
@@ -1984,11 +1600,12 @@ generate_crypto() {
 }
 
 build_xray_config() {
-    # info "网络栈netstack = ${cyan}${netstack}${none}" 
+    build_default_route_settings || return 1
+    # info "网络栈netstack = ${cyan}${netstack}${none}"
     # info "本机IP = ${cyan}${ip}${none}"
-    # info "端口Port = ${cyan}${port}${none}" 
-    # info "用户UUID = ${cyan}${uuid}${none}" 
-    # info "域名SNI = ${cyan}$domain${none}" 
+    # info "端口Port = ${cyan}${port}${none}"
+    # info "用户UUID = ${cyan}${uuid}${none}"
+    # info "域名SNI = ${cyan}$domain${none}"
 
     # Randomize the REALITY fallback rate limit around 1 Mbps sustained / 2 Mbps
     # burst (targets: 125000 / 250000 bytes-per-sec). Xray docs mandate
@@ -1997,7 +1614,7 @@ build_xray_config() {
     fallback_burst_bytes_per_sec=$((250000 * (85 + RANDOM % 31) / 100))
 
     reality_template=$(cat <<-EOF
-      { 
+      {
         "log": {
           "loglevel": "error"
         },
@@ -2047,11 +1664,7 @@ build_xray_config() {
 ${socks_inbound_json}}
         ],
         "outbounds": [
-//          {
-//            "protocol": "freedom",
-//            "settings": {},
-//            "tag": "direct"
-//          },
+          ${default_outbound_json},
           {
             "protocol": "freedom",
             "streamSettings": {
@@ -2088,14 +1701,8 @@ ${socks_inbound_json}}
           }
         ],
         "dns": {
-          "servers": [
-            "8.8.8.8",
-            "1.1.1.1",
-//            "2001:4860:4860::8888",
-//            "2606:4700:4700::1111",
-            "localhost"
-          ],
-          "queryStrategy": "UseIPv4"
+          "servers": ${dns_servers_json},
+          "queryStrategy": "${dns_query_strategy}"
         },
         "routing": {
           "domainStrategy": "IPIfNonMatch",
@@ -2148,57 +1755,276 @@ EOF
             exit 1
         fi
     fi
-    
-    if ! echo "$reality_template" > "$config_path"; then
-        task_fail
-        error "写入xray配置文件失败: $config_path / Failed to write xray config to $config_path."
-        [[ -f "$config_path" ]] && rm -f "$config_path"
-        error "已删除不完整的配置文件，请检查权限、磁盘空间和$LOG_FILE获取详情 / Partial config file removed. Check permissions, disk space, and $LOG_FILE for details."
-        exit 1
-    fi
-    task_done
 
-log_info "--- ${config_path} ---"
-    cat "$config_path" >> "$LOG_FILE"
+    pending_xray_config="$(mktemp "${config_path}.stage.XXXXXX")" || return 1
+    if ! printf '%s\n' "$reality_template" > "$pending_xray_config"; then
+        rm -f "$pending_xray_config"
+        pending_xray_config=""
+        task_fail
+        return 1
+    fi
+    chmod 600 "$pending_xray_config" || return 1
+    log_info "event=config_staged preferred=ipv${default_route_choice} dns_query=${dns_query_strategy}"
+    task_done
+}
+
+# Egress is independent of the address family used by clients to reach this VPS.
+detect_egress_network() {
+    egress_ipv4_available=0
+    egress_ipv6_available=0
+    local family=""
+    local route_ok=1
+    for family in 4 6; do
+        route_ok=1
+        if command -v ip >/dev/null 2>&1; then
+            if [[ "$family" == 4 ]]; then
+                ip -4 route get 1.1.1.1 >/dev/null 2>&1 || route_ok=0
+            else
+                ip -6 route get 2606:4700:4700::1111 >/dev/null 2>&1 || route_ok=0
+            fi
+        fi
+        [[ "$route_ok" -eq 1 ]] || continue
+        if curl "-${family}" -fsS --noproxy '*' --connect-timeout 2 --max-time 4 \
+                https://www.cloudflare.com/cdn-cgi/trace >/dev/null 2>&1 ||
+           curl "-${family}" -fsS --noproxy '*' --connect-timeout 2 --max-time 4 \
+                https://api64.ipify.org >/dev/null 2>&1; then
+            if [[ "$family" == 4 ]]; then egress_ipv4_available=1; else egress_ipv6_available=1; fi
+        fi
+    done
+    [[ "$egress_ipv4_available" -eq 1 || "$egress_ipv6_available" -eq 1 ]]
+}
+
+select_default_route() {
+    local selection=""
+    if [[ -z "$default_route_choice" ]] && ! { exec 3</dev/tty; } 2>/dev/null; then
+        display_result "需要交互终端；自动化请用 --default-route=4|6 / A terminal is required; use --default-route=4|6 for automation." >&2
+        return 1
+    fi
+    if [[ -z "$egress_ipv4_available" || -z "$egress_ipv6_available" ]]; then
+        detect_egress_network || {
+            exec 3<&-
+            display_result "没有可用出口 / No reachable IPv4 or IPv6 egress." >&2
+            return 1
+        }
+    fi
+    if [[ -z "$default_route_choice" ]]; then
+        while true; do
+            display_result "选择默认出口 / Default egress"
+            if [[ "$egress_ipv4_available" -eq 1 ]]; then
+                display_result "1) IPv4 优先 / Prefer IPv4"
+            else
+                display_result "1) IPv4 不可用 / IPv4 unavailable"
+            fi
+            if [[ "$egress_ipv6_available" -eq 1 ]]; then
+                display_result "2) IPv6 优先 / Prefer IPv6"
+            else
+                display_result "2) IPv6 不可用 / IPv6 unavailable"
+            fi
+            display_result "0) 取消 / Cancel"
+            printf '选择 / Select: '
+            if ! read -r selection <&3; then exec 3<&-; return 2; fi
+            case "$selection" in
+                0) exec 3<&-; return 2 ;;
+                1) [[ "$egress_ipv4_available" -eq 1 ]] && { default_route_choice=4; break; } ;;
+                2) [[ "$egress_ipv6_available" -eq 1 ]] && { default_route_choice=6; break; } ;;
+            esac
+            display_result "无效或不可用的出口 / Invalid or unavailable egress." >&2
+        done
+        exec 3<&-
+    fi
+    case "$default_route_choice" in
+        4) [[ "$egress_ipv4_available" -eq 1 ]] && return 0 ;;
+        6) [[ "$egress_ipv6_available" -eq 1 ]] && return 0 ;;
+    esac
+    display_result "所选出口不可用 / Selected egress is not reachable." >&2
+    return 1
+}
+
+build_default_route_settings() {
+    # Template-only callers may already supply interface detection results.
+    if [[ -z "$egress_ipv4_available" ]]; then
+        egress_ipv4_available=0
+        [[ -n "${IPv4:-}" ]] && egress_ipv4_available=1
+    fi
+    if [[ -z "$egress_ipv6_available" ]]; then
+        egress_ipv6_available=0
+        [[ -n "${IPv6:-}" ]] && egress_ipv6_available=1
+    fi
+    if [[ -z "$default_route_choice" ]]; then
+        default_route_choice=4
+        [[ "$egress_ipv4_available" -eq 1 ]] || default_route_choice=6
+    fi
+    case "$default_route_choice" in
+        4) [[ "$egress_ipv4_available" -eq 1 ]] || return 1 ;;
+        6) [[ "$egress_ipv6_available" -eq 1 ]] || return 1 ;;
+        *) return 1 ;;
+    esac
+    local prioritize_ipv6=false
+    [[ "$default_route_choice" == 6 ]] && prioritize_ipv6=true
+    dns_query_strategy=UseIP
+    if [[ "$egress_ipv4_available" -eq 0 ]]; then
+        dns_query_strategy=UseIPv6
+    elif [[ "$egress_ipv6_available" -eq 0 ]]; then
+        dns_query_strategy=UseIPv4
+    fi
+    local v4='"1.1.1.1","8.8.8.8"'
+    local v6='"2606:4700:4700::1111","2001:4860:4860::8888"'
+    if [[ "$egress_ipv4_available" -eq 1 && "$egress_ipv6_available" -eq 1 ]]; then
+        if [[ "$default_route_choice" == 6 ]]; then dns_servers_json="[$v6,$v4,\"localhost\"]"; else dns_servers_json="[$v4,$v6,\"localhost\"]"; fi
+    elif [[ "$egress_ipv4_available" -eq 1 ]]; then
+        dns_servers_json="[$v4,\"localhost\"]"
+    else
+        dns_servers_json="[$v6,\"localhost\"]"
+    fi
+    default_outbound_json="{\"tag\":\"direct\",\"protocol\":\"freedom\",\"streamSettings\":{\"sockopt\":{\"domainStrategy\":\"UseIP\",\"happyEyeballs\":{\"tryDelayMs\":250,\"prioritizeIPv6\":${prioritize_ipv6},\"interleave\":1,\"maxConcurrentTry\":4}}}}"
+}
+
+apply_default_route_patch() {
+    build_default_route_settings || return 1
+    # Do not override a custom proxy/bind/chained-egress policy implicitly.
+    if ! jq -e '
+        (.outbounds | type == "array" and length > 0) and
+        (.outbounds[0].protocol == "freedom") and
+        (([.outbounds[] | select(.tag == "direct")] | length) <= 1) and
+        ((.outbounds[0].tag // "") as $first |
+            ($first == "direct" or $first == "force_ipv4" or $first == "force_ipv6" or
+             ([.outbounds[] | select(.tag == "direct")] | length) == 0)) and
+        (all(.outbounds[]; (.tag != "direct") or .protocol == "freedom")) and
+        ((.outbounds[0].sendThrough // "0.0.0.0") == "0.0.0.0") and
+        ((.outbounds[0].streamSettings.sockopt.dialerProxy // "") == "") and
+        ((.outbounds[0].proxySettings.tag // "") == "") and
+        (all(.outbounds[] | select(.tag == "direct");
+            ((.sendThrough // "0.0.0.0") == "0.0.0.0") and
+            ((.streamSettings.sockopt.dialerProxy // "") == "") and
+            ((.proxySettings.tag // "") == "")))
+        ' "$patch_jq_source" >/dev/null 2>&1; then
+        error "默认出站存在自定义代理或绑定策略，无法安全修改 / Custom default proxy or bind policy prevents a safe egress change."
+        return 1
+    fi
+    jq --argjson preferred "$default_outbound_json" --argjson servers "$dns_servers_json" --arg query "$dns_query_strategy" '
+        .outbounds as $original |
+        ($original[0].tag // "") as $firstTag |
+        (if ($original | any(.tag == "direct")) then
+            ($original[] | select(.tag == "direct"))
+         elif ($firstTag == "force_ipv4" or $firstTag == "force_ipv6") then $preferred
+         else $original[0] end) as $base |
+        ($base | (if .settings.domainStrategy? != null then .settings.domainStrategy = "AsIs" else . end) |
+            .streamSettings.sockopt.domainStrategy = "UseIP" |
+            .streamSettings.sockopt.happyEyeballs = $preferred.streamSettings.sockopt.happyEyeballs) as $default |
+        .outbounds = ([$default] + [$original[] |
+            select(if ($original | any(.tag == "direct")) then .tag != "direct"
+                   elif ($firstTag == "force_ipv4" or $firstTag == "force_ipv6") then true
+                   else . != $original[0] end)]) |
+        .dns.queryStrategy = $query |
+        .dns.servers = (($servers + (.dns.servers // [])) | reduce .[] as $server ([]; if index($server) == null then . + [$server] else . end))
+        ' "$patch_jq_source" > "$patch_tmp_out" 2>>"$LOG_FILE"
+}
+
+collect_xray_diagnostics() {
+    configure_xray_service_identity
+    local diagnostic=""
+    if [[ "${ID:-}" == alpine || "${ID_LIKE:-}" == alpine ]]; then
+        diagnostic="$(rc-service "$runtime_xray_service_alpine" status 2>&1 | tail -n 30)"
+    else
+        diagnostic="$(journalctl -u "$runtime_xray_service" -n 40 --since '2 minutes ago' --no-pager -o cat 2>&1 | tail -n 40)"
+    fi
+    printf '%s\n' "$diagnostic" | sanitize_log_stream | while IFS= read -r line; do
+        log_event ERROR "event=service_diagnostic $line"
+    done
 }
 
 restart_xray_service() {
-    task_start "冲刺，开启服务 / Starting Service"
-    if ! normalize_xray_runtime_permissions "$xray_config_path"; then
-        task_fail
-        error "设置Xray运行时文件权限失败 / Failed to set Xray runtime file permissions"
-        exit 1
-    fi
-    if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-        restart_cmd=(rc-service "$SERVICE_NAME_ALPINE" restart)
+    configure_xray_service_identity
+    task_start "启动并检查Xray / Start and check Xray"
+    normalize_xray_runtime_permissions "$xray_config_path" || { task_fail; return 1; }
+    if [[ "${ID:-}" == alpine || "${ID_LIKE:-}" == alpine ]]; then
+        run_logged service_restart rc-service "$runtime_xray_service_alpine" restart || { task_fail; collect_xray_diagnostics; return 1; }
     else
-        restart_cmd=(systemctl restart "$SERVICE_NAME")
+        run_logged service_restart systemctl restart "$runtime_xray_service" || { task_fail; collect_xray_diagnostics; return 1; }
     fi
-    if ! "${restart_cmd[@]}" >> "$LOG_FILE" 2>&1; then
-        task_fail
-        error "重启nokey服务失败，请查看$LOG_FILE获取详情 / Failed to restart nokey service. Check $LOG_FILE for details."
-        exit 1
-    fi
-    task_done
+    local attempt=0
+    while [[ "$attempt" -lt 3 ]]; do
+        if xray_service_is_active; then task_done; return 0; fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    task_fail
+    collect_xray_diagnostics
+    return 1
 }
+
+commit_xray_config() {
+    local staged="$1"
+    local target="$xray_config_path"
+    local backup=""
+    local restore_stage=""
+    if [[ -L "$target" || ( -e "$target" && ! -f "$target" ) || -L "$staged" || ! -f "$staged" ]]; then
+        error "配置目标不安全或暂存配置缺失 / Unsafe config target or missing staged config."
+        return 1
+    fi
+    chmod 600 "$staged" || return 1
+    if ! run_logged config_validate xray run -test -format json -c stdin: < "$staged"; then
+        error "Xray配置校验失败，原配置已保留 / Configuration validation failed; original configuration preserved."
+        rm -f "$staged"
+        return 1
+    fi
+    if [[ -f "$target" ]]; then
+        backup="$(mktemp "${target}.backup.XXXXXX")" || return 1
+        if ! cat "$target" > "$backup" || ! chmod 600 "$backup"; then rm -f "$backup"; return 1; fi
+        last_config_backup="$backup"
+        log_info "event=config_backup path=$backup"
+    fi
+    # Move only a same-filesystem temporary file into place.
+    if [[ "$(dirname "$staged")" != "$(dirname "$target")" ]]; then
+        restore_stage="$(mktemp "${target}.stage.XXXXXX")" || return 1
+        if ! cat "$staged" > "$restore_stage"; then rm -f "$restore_stage"; return 1; fi
+        rm -f "$staged"
+        staged="$restore_stage"
+    fi
+    chmod 600 "$staged" || return 1
+    if ! mv -f "$staged" "$target"; then return 1; fi
+    if restart_xray_service; then
+        log_info "event=config_applied preferred=ipv${default_route_choice:-unchanged}"
+        return 0
+    fi
+    log_event ERROR "event=config_apply_failed rollback_required=1"
+    if [[ -n "$backup" ]]; then
+        restore_stage="$(mktemp "${target}.rollback.XXXXXX")" || return 1
+        if cat "$backup" > "$restore_stage" && chmod 600 "$restore_stage" && mv -f "$restore_stage" "$target" && restart_xray_service; then
+            log_event WARN "event=config_rollback status=success backup=$backup"
+            error "应用失败，已恢复原配置 / Apply failed; previous configuration restored."
+        else
+            rm -f "$restore_stage"
+            log_event ERROR "event=config_rollback status=failed backup=$backup"
+            error "恢复配置后服务未就绪，请检查日志 / Service is not ready after rollback; check the log."
+        fi
+    else
+        rm -f "$target"
+        log_event ERROR "event=config_rollback status=no_previous_config"
+    fi
+    return 1
+}
+
 configure_xray() {
     if [[ $keepconfig -eq 1 ]]; then
         initialize_ip_from_netstack
-        info "将保留现有配置 --keepconfig / Keeping existing config due to --keepconfig"
         load_runtime_vars_from_existing_config
-        configure_xray_journald_logging || { error "配置Xray journald日志失败 / Failed to configure Xray journald logging"; exit 1; }
-        info "跳过配置生成 --keepconfig / Skip config generation due to --keepconfig"
+        configure_xray_journald_logging || return 1
     else
+        if [[ -z "$egress_ipv4_available" || -z "$egress_ipv6_available" ]]; then
+            detect_egress_network || { error "没有可用出口 / No reachable egress."; return 1; }
+        fi
         initialize_variables
         generate_crypto
         if [[ "$addsocks_mode" -eq 1 ]]; then
             task_start "生成SOCKS5入站 / Generate SOCKS5 inbound"
-            prepare_socks_inbound || { task_fail; exit 1; }
-            task_done_with_info "port=${socks_port}, user=${socks_username}"
+            prepare_socks_inbound || { task_fail; return 1; }
+            task_done_with_info "port=${socks_port}"
         fi
-        build_xray_config
+        build_xray_config || return 1
+        commit_xray_config "$pending_xray_config" || return 1
+        pending_xray_config=""
     fi
-    restart_xray_service
 }
 
 
@@ -2262,7 +2088,7 @@ configure_xray_journald_logging() {
         return 1
     fi
 
-    if ! mv "$journald_tmp" "$xray_config_path"; then
+    if ! commit_xray_config "$journald_tmp"; then
         error "写入journald配置失败: $xray_config_path / Failed to write journald config to $xray_config_path."
         rm -f "$journald_tmp" "$patch_cleanup"
         return 1
@@ -2383,7 +2209,7 @@ prepare_socks_inbound() {
     fi
     socks_port="$random_unused_port"
 
-    # Xray names password-auth entries "users" (Sing-box uses different schema names).
+    # Xray password-auth entries use "users".
     socks_inbound_json=$(cat <<-EOF
           {
             "tag": "nokey-socks-${socks_port}",
@@ -2432,9 +2258,9 @@ output_socks_proxy() {
     curl_command="curl --proxy '${proxy_url}' https://ipinfo.io"
 
     info "SOCKS5代理 / SOCKS5 Proxy:"
-    info "${magenta}${proxy_url}${none}"
+    display_result "$proxy_url"
     info "SOCKS5测试命令 / SOCKS5 test command:"
-    info "${cyan}${curl_command}${none}"
+    display_result "$curl_command"
     echo "$proxy_url" >> "$URL_FILE"
     echo "$curl_command" >> "$URL_FILE"
 }
@@ -2451,20 +2277,22 @@ patch_existing_xray_config() {
         exit 1
     fi
 
-    if [[ "$addsocks_mode" -ne 1 ]] && ! jq -e '.inbounds[0].streamSettings.realitySettings' "$patch_jq_source" >/dev/null 2>&1; then
+    if [[ "$addsocks_mode" -ne 1 && "$default_route_mode" -ne 1 ]] && ! jq -e '.inbounds[0].streamSettings.realitySettings' "$patch_jq_source" >/dev/null 2>&1; then
         task_fail
         error "配置中没有REALITY设置，无法修补 / No REALITY settings found in config; cannot patch."
         rm -f "$patch_cleanup"
         exit 1
     fi
 
-    patch_tmp_out="$(mktemp /tmp/nokey-config-patch.XXXXXX)" || {
+    patch_tmp_out="$(mktemp "${xray_config_path}.stage.XXXXXX")" || {
         task_fail
         error "创建临时文件失败 / Failed to create temporary file."
         exit 1
     }
 
-    if [[ "$add_limiter_mode" -eq 1 ]]; then
+    if [[ "$default_route_mode" -eq 1 ]]; then
+        apply_default_route_patch || { task_fail; rm -f "$patch_tmp_out" "$patch_cleanup"; return 1; }
+    elif [[ "$add_limiter_mode" -eq 1 ]]; then
         add_limiter_to_existing_config || { task_fail; rm -f "$patch_tmp_out" "$patch_cleanup"; exit 1; }
     elif [[ "$change_sni_mode" -eq 1 ]]; then
         change_sni_in_existing_config || { task_fail; rm -f "$patch_tmp_out" "$patch_cleanup"; exit 1; }
@@ -2472,20 +2300,22 @@ patch_existing_xray_config() {
         add_socks_to_existing_config || { task_fail; rm -f "$patch_tmp_out" "$patch_cleanup"; exit 1; }
     fi
 
-    if ! mv "$patch_tmp_out" "$xray_config_path"; then
-        task_fail
-        error "写入配置文件失败: $xray_config_path / Failed to write config to $xray_config_path."
-        rm -f "$patch_cleanup"
-        exit 1
+    # Preserve runtime logging policy except the legacy file sinks, then commit once.
+    local clean_stage=""
+    clean_stage="$(mktemp "${xray_config_path}.stage.XXXXXX")"
+    if [[ -z "$clean_stage" ]] || ! jq 'del(.log.access, .log.error)' "$patch_tmp_out" > "$clean_stage"; then
+        rm -f "$patch_tmp_out" "$patch_cleanup" "$clean_stage"
+        return 1
     fi
-    [[ -n "$patch_cleanup" ]] && rm -f "$patch_cleanup"
-    if ! configure_xray_journald_logging; then
-        task_fail
-        exit 1
-    fi
+    rm -f "$patch_tmp_out" "$patch_cleanup"
+    patch_cleanup=""
+    commit_xray_config "$clean_stage" || return 1
     task_done
-
-    restart_xray_service
+    if [[ "$default_route_mode" -eq 1 ]]; then
+        info "默认出口 / Default egress: IPv${default_route_choice} 优先 / preferred"
+        info "配置备份 / Backup: $last_config_backup"
+        return 0
+    fi
 
     if [[ "$addsocks_mode" -eq 1 ]]; then
         output_socks_proxy
@@ -2495,7 +2325,7 @@ patch_existing_xray_config() {
     # Regenerate links from the patched config so SNI/limiter changes are reflected.
     initialize_ip_from_netstack
     load_runtime_vars_from_existing_config
-    output_results
+    output_results || return 1
 }
 
 
@@ -2544,7 +2374,7 @@ install_realm() {
     mkdir -p /usr/local/bin "$REALM_CONFIG_DIR" || { task_fail; error "创建Realm目录失败 / Failed to create realm directories"; exit 1; }
 
     log_verbose "Downloading: ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/realm"
-    curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}" -o /usr/local/bin/realm >> "$LOG_FILE" 2>&1 || { task_fail; error "下载${arch_binary_name}失败 / Failed to download ${arch_binary_name}"; exit 1; }
+    run_logged download curl -fSL --retry 3 --retry-delay 5 "${GITHUB_RELEASE_BASE_URL}/${arch_binary_name}" -o /usr/local/bin/realm || { task_fail; error "下载${arch_binary_name}失败 / Failed to download ${arch_binary_name}"; exit 1; }
     chmod 755 /usr/local/bin/realm
 
     local realm_rc_tmp
@@ -2555,7 +2385,7 @@ install_realm() {
     if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
         log_info "安装OpenRC服务 / Installing OpenRC service: /etc/init.d/${REALM_SERVICE_NAME_ALPINE}"
         log_verbose "Downloading service file: ${GITHUB_REALM_RC_URL} -> ${realm_rc_tmp}"
-        curl -fSL "${GITHUB_REALM_RC_URL}" -o "${realm_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载realm.rc失败 / Failed to download realm.rc"; exit 1; }
+        run_logged download curl -fSL "${GITHUB_REALM_RC_URL}" -o "${realm_rc_tmp}" || { task_fail; error "下载realm.rc失败 / Failed to download realm.rc"; exit 1; }
         configure_openrc_crash_restart "${realm_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置realm崩溃自动重启失败 / Failed to configure realm crash restart"; exit 1; }
         install -m 755 "${realm_rc_tmp}" /etc/init.d/"$REALM_SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "安装/etc/init.d/$REALM_SERVICE_NAME_ALPINE失败 / Failed to install /etc/init.d/$REALM_SERVICE_NAME_ALPINE"; exit 1; }
         rm -f "${realm_rc_tmp}" >> "$LOG_FILE" 2>&1
@@ -2564,7 +2394,7 @@ install_realm() {
     else
         log_info "安装systemd服务 / Installing systemd service: /etc/systemd/system/${REALM_SERVICE_NAME}"
         log_verbose "Downloading service file: ${GITHUB_REALM_SERVICE_URL} -> ${realm_service_tmp}"
-        curl -fSL "${GITHUB_REALM_SERVICE_URL}" -o "${realm_service_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "下载realm.service失败 / Failed to download realm.service"; exit 1; }
+        run_logged download curl -fSL "${GITHUB_REALM_SERVICE_URL}" -o "${realm_service_tmp}" || { task_fail; error "下载realm.service失败 / Failed to download realm.service"; exit 1; }
         configure_systemd_crash_restart "${realm_service_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置realm崩溃自动重启失败 / Failed to configure realm crash restart"; exit 1; }
         cp "${realm_service_tmp}" /etc/systemd/system/"$REALM_SERVICE_NAME" || { task_fail; error "写入/etc/systemd/system/$REALM_SERVICE_NAME失败 / Failed to write /etc/systemd/system/$REALM_SERVICE_NAME"; exit 1; }
         rm -f "${realm_service_tmp}" >> "$LOG_FILE" 2>&1
@@ -2636,7 +2466,7 @@ REALMCFG
     task_done_with_info "listen=${realm_listen}, remote=${realm_remote}"
 
 log_info "--- ${realm_config} ---"
-    cat "$realm_config" >> "$LOG_FILE"
+    log_info "event=realm_config_written path=$realm_config"
 }
 
 restart_realm_service() {
@@ -2687,38 +2517,43 @@ restart_realm_service() {
 
 # Function to display help message; exits with $1 (default 0) so error paths can fail non-zero
 show_help() {
-  echo -e "当前版本 / Version: ${cyan}${SCRIPT_VERSION}${none} "
-  echo "使用方法: $0 [options] / Usage"
-  echo "选项: / Options"
-  echo "  --netstack=4|6     使用IPv4或IPv6 (默认: 自动检测) / Use IPv4 or IPv6"
-  echo "  --port=NUMBER      设置端口号 (默认: 随机) / Set port number"
-  echo "  --domain=DOMAIN    设置SNI域名 (默认: www.amd.com) / Set SNI domain"
-  echo "  --uuid=STRING      设置UUID (默认: 自动生成) / Set UUID"
-  echo "  --mldsa            启用ML-DSA签名生成 (默认: 关闭) / Enable ML-DSA signature generation (default: off)"
-  echo "  --mldsa65Seed=STRING  设置ML-DSA-65私钥 (默认: 自动生成) / Set ML-DSA-65 private key"
-  echo "  --mldsa65Verify=STRING  设置ML-DSA-65公钥 (默认: 自动生成) / Set ML-DSA-65 public key"
-  echo "  --caddy            从运行的Caddy服务自动检测域名和端口 / Detect domain and port from Caddy service"
-  echo "  --keepconfig       保留现有配置并从中生成输出链接 / Keep existing nokey.json and generate links from it"
-  echo "  --add-limiter      为现有配置添加REALITY回落限速(独立模式, 不能与其他参数连用) / Add REALITY fallback rate limit to existing config (standalone, no other flags)"
-  echo "  --change-sni       仅更换现有配置的REALITY SNI(独立模式, 不能与其他参数连用) / Re-randomize the REALITY SNI in existing config (standalone, no other flags)"
-  echo "  --addsocks         添加随机端口和凭据的SOCKS5入站；Xray运行时仅修补现有配置 / Add a SOCKS5 inbound with random port and credentials; patch only when Xray is running"
-  echo "  --force            强制重装 / Force Reinstall"
-   echo "  --realm            额外安装Realm转发代理 (与 --remote 搭配) / Also install Realm relay proxy alongside Xray/Sing-box (use with --remote)"
-   echo "  --realm-only      仅安装Realm转发代理 (不安装Xray/Sing-box, 与 --remote 搭配) / Install Realm relay proxy only (without Xray/Sing-box, use with --remote)"
-   echo "  --singbox         在Xray旁额外安装Sing-box / Install Sing-box alongside Xray"
-   echo "  --singbox-only    仅安装Sing-box (不安装Xray, 使用VLESS Reality Vision) / Install Sing-box only (without Xray, uses VLESS Reality Vision)"
-  echo "  --remote=ADDRESS   设置Realm远程地址 (必填, 格式 host:port) / Set Realm remote address (required, format host:port)"
-  echo "  --listen=ADDRESS   设置Realm监听地址 (可选, 默认派生自远程端口) / Set Realm listen address (optional, defaults to remote port on any address)"
-  echo "  --remove           卸载Xray (和已安装的Realm) 与NoKey / Uninstall Xray (and Realm if installed) and NoKey"
-  echo "  --dry-run          仅预览安装动作，不写入系统 / Preview actions only"
-  echo "  --menu             打开其他功能菜单 / Open the feature menu"
-  echo "  --help             显示此帮助信息 / Show this help message"
+  display_result "当前版本 / Version: ${cyan}${SCRIPT_VERSION}${none} "
+  display_result "使用方法: $0 [options] / Usage"
+  display_result "选项: / Options"
+  display_result "  --netstack=4|6     连接地址使用IPv4或IPv6 / Inbound share address family"
+  display_result "  --default-route   菜单选择默认出口 / Choose preferred IPv4 or IPv6 egress"
+  display_result "  --default-route=4|6  非交互选择默认出口 / Set preferred egress without a menu"
+  display_result "  --port=NUMBER      设置端口号 (默认: 随机) / Set port number"
+  display_result "  --domain=DOMAIN    设置SNI域名 (默认: www.amd.com) / Set SNI domain"
+  display_result "  --uuid=STRING      设置UUID (默认: 自动生成) / Set UUID"
+  display_result "  --mldsa            启用ML-DSA签名生成 (默认: 关闭) / Enable ML-DSA signature generation (default: off)"
+  display_result "  --mldsa65Seed=STRING  设置ML-DSA-65私钥 (默认: 自动生成) / Set ML-DSA-65 private key"
+  display_result "  --mldsa65Verify=STRING  设置ML-DSA-65公钥 (默认: 自动生成) / Set ML-DSA-65 public key"
+  display_result "  --caddy            从运行的Caddy服务自动检测域名和端口 / Detect domain and port from Caddy service"
+  display_result "  --keepconfig       保留现有配置并从中生成输出链接 / Keep existing nokey.json and generate links from it"
+  display_result "  --add-limiter      为现有配置添加REALITY回落限速(独立模式, 不能与其他参数连用) / Add REALITY fallback rate limit to existing config (standalone, no other flags)"
+  display_result "  --change-sni       仅更换现有配置的REALITY SNI(独立模式, 不能与其他参数连用) / Re-randomize the REALITY SNI in existing config (standalone, no other flags)"
+  display_result "  --addsocks         添加随机端口和凭据的SOCKS5入站；Xray运行时仅修补现有配置 / Add a SOCKS5 inbound with random port and credentials; patch only when Xray is running"
+  display_result "  --force            强制重装 / Force Reinstall"
+   display_result "  --realm            额外安装Realm转发代理 (与 --remote 搭配) / Also install Realm relay proxy alongside Xray (use with --remote)"
+   display_result "  --realm-only      仅安装Realm转发代理 (不安装Xray, 与 --remote 搭配) / Install Realm relay proxy only (without Xray, use with --remote)"
+  display_result "  --remote=ADDRESS   设置Realm远程地址 (必填, 格式 host:port) / Set Realm remote address (required, format host:port)"
+  display_result "  --listen=ADDRESS   设置Realm监听地址 (可选, 默认派生自远程端口) / Set Realm listen address (optional, defaults to remote port on any address)"
+  display_result "  --remove           卸载Xray (和已安装的Realm) 与NoKey / Uninstall Xray (and Realm if installed) and NoKey"
+  display_result "  --dry-run          仅预览安装动作，不写入系统 / Preview actions only"
+  display_result "  --menu             打开其他功能菜单 / Open the feature menu"
+  display_result "  --help             显示此帮助信息 / Show this help message"
 
   exit "${1:-0}"
 }
 
 dry_run_preview() {
     task_start "预览安装流程 / Dry Run"
+    if [[ "$default_route_mode" -eq 1 ]]; then
+        build_default_route_settings || return 1
+        info "默认出口 / Default egress: IPv${default_route_choice} 优先 / preferred"
+        info "DNS queryStrategy=${dns_query_strategy} servers=${dns_servers_json}"
+    fi
 
     local os_family
     os_family="$(resolve_os_family)"
@@ -2768,65 +2603,6 @@ dry_run_preview() {
         info "将写入配置 / Would write config:"
         info "  ${REALM_CONFIG_DIR}/config.json"
         info ""
-    fi
-
-    # Handle sing-box mode in dry run
-    if [[ "$sing_box_mode" -eq 1 ]]; then
-        info "${green}=== Sing-box (VLESS Reality Vision) ===${none}"
-        if [[ "$sing_box_only" -eq 1 ]]; then
-            info "模式: 仅Sing-box (不安装Xray) / Mode: Sing-box only (no Xray)"
-        else
-            info "模式: Xray + Sing-box / Mode: Xray + Sing-box"
-        fi
-        if [[ "$realm_only" -eq 1 ]]; then
-            info "跳过Sing-box安装: --realm-only 模式 / Skipping Sing-box: --realm-only mode"
-            task_done
-            return
-        fi
-        
-        local singbox_arch_name=""
-        singbox_arch_name="$(resolve_singbox_arch_name)" || { task_fail; error "不支持的架构: $(uname -m)，仅支持amd64和arm64 / Unsupported architecture: $(uname -m). Only amd64 and arm64 are supported."; exit 1; }
-        
-        info "将创建目录 / Would create directories:"
-        info "  /usr/local/bin"
-        info "  $SINGBOX_CONFIG_DIR"
-        
-        info "将下载文件 / Would download files:"
-        info "  ${GITHUB_RELEASE_BASE_URL}/${singbox_arch_name} -> /usr/local/bin/sing-box"
-        
-        info "将设置权限 / Would set permission:"
-        info "  chmod 755 /usr/local/bin/sing-box"
-        
-        info "将生成密钥 / Would generate Reality keys:"
-        info "  sing-box generate reality-keypair"
-        info "  private_key / public_key pair"
-        
-        info "将生成shortid / Would generate shortid:"
-        info "  random 16-character hex string"
-        
-        if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-            info "将安装服务(OpenRC) / Would install service (OpenRC):"
-            info "  ${GITHUB_SINGBOX_RC_URL} -> /tmp/nokey.sing-box.rc.<pid>"
-            info "  /tmp/nokey.sing-box.rc.<pid> -> /etc/init.d/${SINGBOX_SERVICE_NAME_ALPINE}"
-            info "  rc-update add ${SINGBOX_SERVICE_NAME_ALPINE}"
-        else
-            info "将安装服务(systemd) / Would install service (systemd):"
-            info "  ${GITHUB_SINGBOX_SERVICE_URL} -> /tmp/nokey.sing-box.service.<pid>"
-            info "  /tmp/nokey.sing-box.service.<pid> -> /etc/systemd/system/${SINGBOX_SERVICE_NAME}"
-            info "  systemctl daemon-reload"
-            info "  systemctl enable ${SINGBOX_SERVICE_NAME}"
-        fi
-        
-        info "将写入配置 / Would write config:"
-        info "  $SINGBOX_CONFIG_DIR/config.json"
-        info "  协议: VLESS Reality Vision with xtls-rprx-vision flow"
-        info ""
-    fi
-    
-    # --singbox-only skips Xray; --singbox previews both services.
-    if [[ "$sing_box_only" -eq 1 ]]; then
-        task_done
-        return
     fi
 
     info "${green}=== Xray (VLESS Reality) ===${none}"
@@ -2885,149 +2661,54 @@ dry_run_preview() {
 
 
 check_service_status() {
-    task_start "检查服务状态 / Checking Service"
-
-    if [[ $realm_mode -eq 1 ]]; then
-        if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-            if ! rc-service "$REALM_SERVICE_NAME_ALPINE" status >> "$LOG_FILE" 2>&1; then
-                error "Realm服务未运行 / Realm service is not active"
-                rc-service "$REALM_SERVICE_NAME_ALPINE" status | tee -a "$LOG_FILE"
-                error "详细日志记录在 $LOG_FILE / See complete logs"
-                exit 1
-            fi
-        else
-            if ! systemctl is-active --quiet "$REALM_SERVICE_NAME"; then
-                error "Realm服务未运行 / Realm service is not active"
-                systemctl status "$REALM_SERVICE_NAME" | tee -a "$LOG_FILE"
-                error "详细日志记录在 $LOG_FILE / See complete logs"
-                exit 1
-            fi
+    task_start "检查服务状态 / Check service"
+    if [[ "$realm_mode" -eq 1 ]]; then
+        if [[ "${ID:-}" == alpine || "${ID_LIKE:-}" == alpine ]]; then
+            if ! run_logged realm_status rc-service "$REALM_SERVICE_NAME_ALPINE" status; then task_fail; return 1; fi
+        elif ! systemctl is-active --quiet "$REALM_SERVICE_NAME"; then
+            task_fail
+            run_logged realm_status systemctl status --no-pager "$REALM_SERVICE_NAME" || true
+            return 1
         fi
     fi
-
-    if [[ $realm_only -eq 1 ]]; then
-        task_done
-        return
+    if [[ "$realm_only" -ne 1 ]] && ! xray_service_is_active; then
+        task_fail
+        collect_xray_diagnostics
+        error "Xray服务未运行 / Xray service is not active."
+        return 1
     fi
-
-    # Check the service whose connection details are about to be emitted.
-    if [[ "$result_sing_box_mode" -eq 1 ]]; then
-        if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-            if rc-service "$SINGBOX_SERVICE_NAME_ALPINE" status >> "$LOG_FILE" 2>&1; then
-                info "Sing-box服务运行中 / Sing-box is running"
-            else
-                error "Sing-box服务未运行 / Sing-box service is not active"
-                rc-service "$SINGBOX_SERVICE_NAME_ALPINE" status | tee -a "$LOG_FILE"
-                error "详细日志记录在 $LOG_FILE / See complete logs"
-                exit 1
-            fi
-        else
-            if systemctl is-active --quiet "$SINGBOX_SERVICE_NAME"; then
-                info "Sing-box服务运行中 / Sing-box is running"
-            else
-                error "Sing-box服务未运行 / Sing-box service is not active"
-                systemctl status "$SINGBOX_SERVICE_NAME" | tee -a "$LOG_FILE"
-                error "详细日志记录在 $LOG_FILE / See complete logs"
-                exit 1
-            fi
-        fi
-        task_done
-        return
-    fi
-
-    if [ "$ID" = "alpine" ] || [ "$ID_LIKE" = "alpine" ]; then
-      if rc-service "$SERVICE_NAME_ALPINE" status >> "$LOG_FILE" 2>&1; then 
-          info "Nokey服务运行中 / Nokey is running"
-      else
-        error "Nokey服务未运行 / Nokey service is not active" 
-        rc-service "$SERVICE_NAME_ALPINE" status | tee -a "$LOG_FILE"
-        error "详细日志记录在 $LOG_FILE / See complete logs"
-        exit 1
-      fi
-    else
-      if systemctl is-active --quiet "$SERVICE_NAME"; then
-        info "Nokey服务运行中 / Nokey is running"
-      else
-        error "Nokey服务未运行 / Nokey service is not active" 
-        systemctl status "$SERVICE_NAME" | tee -a "$LOG_FILE"
-        error "详细日志记录在 $LOG_FILE / See complete logs"
-        exit 1
-      fi
-    fi
-
     task_done
 }
 
 generate_share_links() {
-    if [[ "$result_sing_box_mode" -eq 1 ]]; then
-        local server_ip=$ip
-        if [[ $netstack == "6" ]]; then
-            server_ip="[$ip]"
-        fi
-        local link
-        link="vless://${uuid}@${server_ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}"
-        info "分享链接 / Share Link:"
-        echo -e "${magenta}${link}${none}" | tee -a "$LOG_FILE"
-        echo "$link" >> "$URL_FILE"
-        return
-    fi
-
-    if [[ $netstack == "6" ]]; then
+    if [[ $netstack == "6" && "$ip" != \[*\] ]]; then
       ip="[$ip]"
     fi
-    
+
     vless_reality_url_short="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}"
 
     info "分享链接 / Share Link:"
-    
+
     if [[ $mldsa_enabled == 1 ]]; then
       vless_reality_mldsa_url="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}&pqv=${mldsa65Verify}#${current_hostname}"
-      echo -e "${magenta}${vless_reality_mldsa_url}${none}"  | tee -a "$LOG_FILE"
+      display_result "${vless_reality_mldsa_url}"
       echo "$vless_reality_mldsa_url" >> "$URL_FILE"
       info "不含mldsa / Without mldsa:"
-      echo -e "${magenta}${vless_reality_url_short}${none}"  | tee -a "$LOG_FILE"
+      display_result "${vless_reality_url_short}"
       echo "$vless_reality_url_short" >> "$URL_FILE"
     else
-      echo -e "${magenta}${vless_reality_url_short}${none}"  | tee -a "$LOG_FILE"
+      display_result "${vless_reality_url_short}"
       echo "$vless_reality_url_short" >> "$URL_FILE"
     fi
 }
 
 generate_clash_config() {
-    if [[ "$result_sing_box_mode" -eq 1 ]]; then
-        local server_ip=$ip
-        if [[ $netstack == "6" ]]; then
-            server_ip=${ip:1:-1}
-        fi
-        local clash_config
-        clash_config=$(cat <<-EOF
-- name: ${current_hostname}
-  type: vless
-  server: ${server_ip}
-  port: ${port}
-  client-fingerprint: ${fingerprint}
-  tls: true
-  servername: ${domain}
-  flow: xtls-rprx-vision
-  network: tcp
-  reality-opts:
-    public-key: ${public_key}
-    short-id: ${shortid}
-    support-x25519mlkem768: true
-  uuid: ${uuid}
-EOF
-)
-        info "Clash.meta 配置 / Clash.meta config:"
-        echo -e "${cyan}${clash_config}${none}" | tee -a "$LOG_FILE"
-        echo "$clash_config" >> "$URL_FILE"
-        return
-    fi
-
     local server_ip_for_clash=$ip
     if [[ $netstack == "6" ]]; then
         # for clash meta, ipv6 does not need bracket.
         # The ip var is already bracketed for vless url.
-        server_ip_for_clash=${ip:1:-1}
+        server_ip_for_clash=${ip#\[}
+        server_ip_for_clash=${server_ip_for_clash%\]}
     fi
 
     clash_meta_config=$(cat <<-EOF
@@ -3048,7 +2729,7 @@ EOF
 EOF
 )
     info "Clash.meta 配置 / Clash.meta config:"
-    echo -e "${cyan}${clash_meta_config}${none}" | tee -a "$LOG_FILE"
+    display_result "${clash_meta_config}"
     echo "$clash_meta_config" >> "$URL_FILE"
 }
 
@@ -3060,7 +2741,7 @@ generate_ipv6_variants() {
     local ipv6_link
     ipv6_link="vless://${uuid}@[${IPv6}]:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}-ipv6"
     info "分享链接 (IPv6) / Share Link (IPv6):"
-    echo -e "${magenta}${ipv6_link}${none}" | tee -a "$LOG_FILE"
+    display_result "${ipv6_link}"
     echo "$ipv6_link" >> "$URL_FILE"
 
     local ipv6_clash
@@ -3082,170 +2763,136 @@ generate_ipv6_variants() {
 EOF
 )
     info "Clash.meta 配置 (IPv6) / Clash.meta config (IPv6):"
-    echo -e "${cyan}${ipv6_clash}${none}" | tee -a "$LOG_FILE"
+    display_result "${ipv6_clash}"
     echo "$ipv6_clash" >> "$URL_FILE"
 }
 
 output_results() {
-    # 指纹FingerPrint
-    fingerprint="random"
-
-    # QR code tip → log only
-    log_info "二维码生成命令：安装qrencode后运行 / For QR code, install qrencode and run: qrencode -t UTF8 -r $URL_FILE"
-
-    check_service_status
-    
-    echo "" | tee -a "$LOG_FILE"
-    separator | tee -a "$LOG_FILE"
-    if [[ "$result_sing_box_mode" -eq 1 ]]; then
-        echo -e "  ${green}✓${none} VLESS Reality Vision" | tee -a "$LOG_FILE"
-    else
-        echo -e "  ${green}✓${none} Xray VLESS Reality" | tee -a "$LOG_FILE"
+    # Chrome offers the ML-KEM key share required by current REALITY servers.
+    fingerprint="chrome"
+    check_service_status || return 1
+    if [[ "$realm_only" -eq 1 ]]; then
+        print_service_commands "$REALM_SERVICE_NAME" "$REALM_SERVICE_NAME_ALPINE"
+        return
     fi
-    echo -e "  ${cyan}IP:Port${none} → ${ip}:${port}" | tee -a "$LOG_FILE"
-    if [[ "$result_sing_box_mode" -ne 1 ]] || [[ -n "$public_key" ]]; then
-        echo -e "  ${cyan}UUID${none} → ${uuid}" | tee -a "$LOG_FILE"
-    fi
-    separator | tee -a "$LOG_FILE"
-    echo "" | tee -a "$LOG_FILE"
-
+    separator
+    display_result "Xray VLESS REALITY" "$green"
+    display_result "IP:Port → ${ip}:${port}"
+    display_result "UUID → ${uuid}"
+    separator
     generate_share_links
     generate_clash_config
     generate_ipv6_variants
     if [[ "$addsocks_mode" -eq 1 ]]; then
         output_socks_proxy
     fi
-    if [[ "$result_sing_box_mode" -eq 1 ]]; then
-        print_service_commands "$SINGBOX_SERVICE_NAME" "$SINGBOX_SERVICE_NAME_ALPINE"
-    else
-        print_service_commands "$SERVICE_NAME" "$SERVICE_NAME_ALPINE"
-    fi
+    info "连接信息 / Connection details: $URL_FILE"
+    info "日志 / Log: $LOG_FILE"
+    print_service_commands "$runtime_xray_service" "$runtime_xray_service_alpine"
 }
 
 
 # Main function
 main() {
     SECONDS=0
-    local install_singbox_alongside=0
     local xray_active=0
-
-    if [ -f /etc/os-release ]; then
+    local route_status=0
+    parse_args "$@" || return 1
+    if [[ "$keepconfig" -eq 1 || "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 || "$addsocks_mode" -eq 1 || "$default_route_mode" -eq 1 ]]; then
+        if [[ ! -f "$xray_config_path" && -f /usr/local/etc/xray/config.json ]]; then
+            xray_config_path=/usr/local/etc/xray/config.json
+        fi
+    fi
+    configure_xray_service_identity
+    if [[ "$menu_mode" -eq 1 ]]; then show_feature_menu; return $?; fi
+    if [[ "$default_route_mode" -eq 1 ]]; then
+        if [[ ! -f "$xray_config_path" && -f /usr/local/etc/xray/config.json ]]; then
+            xray_config_path=/usr/local/etc/xray/config.json
+        fi
+        if [[ -f "$xray_config_path" && "$arg_count" -gt 1 && ! ( "$arg_count" -eq 2 && "$dry_run" -eq 1 ) ]]; then
+            display_result "已有配置时--default-route须单独使用 / Use --default-route alone for an existing config." >&2
+            return 1
+        fi
+        select_default_route || route_status=$?
+        [[ "$route_status" -eq 2 ]] && return 0
+        [[ "$route_status" -eq 0 ]] || return "$route_status"
+    fi
+    if [[ -f /etc/os-release ]]; then
         # shellcheck disable=SC1091
         . /etc/os-release
-    else
-        error "无法识别的OS / Cannot determine OS."
-        exit 1
+    elif [[ "$dry_run" -ne 1 ]]; then
+        display_result "无法识别的OS / Cannot determine OS." >&2
+        return 1
     fi
-
-    show_banner
-    parse_args "$@"
-
-    if [[ "$menu_mode" -eq 1 ]]; then
-        show_feature_menu
-        exit $?
-    fi
-
-    if [[ "$sing_box_mode" -eq 1 && "$sing_box_only" -eq 0 ]]; then
-        install_singbox_alongside=1
-    fi
-
-    # init_output_files must stay after parse_args: non-action flags exit above and must not truncate nokey.log/.url
     if [[ "$dry_run" -eq 1 ]]; then
         detect_network_interfaces
         initialize_ip_from_netstack
-        dry_run_preview
-        exit 0
+        dry_run_preview || return 1
+        return 0
     fi
-
-    init_output_files
-    echo -e "当前版本 / Version: ${cyan}${SCRIPT_VERSION}${none} " | tee -a "$LOG_FILE"
-
-    check_root
-
-    if [[ "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 ]]; then
-        install_dependencies jq
+    check_root || return 1
+    if [[ "$default_route_mode" -eq 1 && -f "$xray_config_path" ]]; then
+        init_output_files preserve-shares || return 1
+    else
+        init_output_files || return 1
+    fi
+    show_banner
+    log_info "event=run_version version=$SCRIPT_VERSION"
+    if [[ -n "$egress_ipv4_available" && -n "$egress_ipv6_available" ]]; then
+        log_info "event=egress_detected ipv4=$egress_ipv4_available ipv6=$egress_ipv6_available"
+    fi
+    if [[ "$default_route_mode" -eq 1 && -f "$xray_config_path" ]]; then
+        install_dependencies jq || return 1
         patch_existing_xray_config
+        return $?
+    fi
+    if [[ "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 ]]; then
+        install_dependencies jq || return 1
+        patch_existing_xray_config || return 1
         info "补丁完成 / Patch complete."
-        exit 0
+        return 0
     fi
-
     if [[ "$addsocks_mode" -eq 1 ]]; then
-        if xray_service_is_active; then
-            xray_active=1
-        fi
+        if xray_service_is_active; then xray_active=1; fi
         if [[ "$xray_active" -eq 1 && ! -f "$xray_config_path" ]]; then
-            error "Xray正在运行但缺少配置文件: $xray_config_path / Xray is active but its config file is missing: $xray_config_path"
-            exit 1
+            error "Xray正在运行但缺少配置文件 / Xray is active but its configuration is missing."
+            return 1
         fi
-        # Preserve any installed configuration, whether the service is active or stopped.
         if [[ "$xray_active" -eq 1 || -f "$xray_config_path" ]]; then
-            install_dependencies jq
-            patch_existing_xray_config
+            install_dependencies jq || return 1
+            patch_existing_xray_config || return 1
             info "SOCKS5入站添加完成 / SOCKS5 inbound added."
-            exit 0
+            return 0
         fi
     fi
-
     if [[ "$remove_mode" -eq 1 ]]; then
         remove_alias
-        if [[ "$realm_mode" -eq 1 ]]; then
-            uninstall_realm
-        fi
-        if [[ "$sing_box_mode" -eq 1 ]]; then
-            uninstall_singbox
-        fi
-        if [[ "$realm_only" -ne 1 && "$sing_box_only" -ne 1 ]]; then
-            uninstall_xray
-        fi
-        info "卸载完成 / Uninstallation complete ... [${green}OK${none}]"
-        exit 0
+        [[ "$realm_mode" -eq 1 ]] && uninstall_realm
+        [[ "$realm_only" -ne 1 ]] && uninstall_xray
+        info "卸载完成 / Uninstallation complete."
+        return 0
     fi
-
-    if [[ "$keepconfig" -eq 1 ]]; then
-        install_dependencies jq
-    else
-        install_dependencies
-    fi
+    if [[ "$keepconfig" -eq 1 ]]; then install_dependencies jq || return 1; else install_dependencies || return 1; fi
     detect_network_interfaces
-
     if [[ "$realm_only" -ne 1 ]]; then
-        # Default and --singbox modes install Xray. --singbox-only skips it.
-        if [[ "$sing_box_only" -ne 1 ]]; then
-            install_xray
-            configure_xray
-
-            # Emit Xray results before Sing-box replaces the shared runtime vars.
-            if [[ "$install_singbox_alongside" -eq 1 ]]; then
-                result_sing_box_mode=0
-                output_results
-                port=""
-                initialize_ip_from_netstack
-            fi
+        if [[ "$keepconfig" -ne 1 && -z "$egress_ipv4_available" ]]; then
+            detect_egress_network || { error "没有可用出口 / No reachable egress."; return 1; }
         fi
-
-        if [[ "$sing_box_mode" -eq 1 ]]; then
-            initialize_ip_from_netstack
-            install_singbox
-        fi
-
+        log_info "event=egress_detected ipv4=${egress_ipv4_available:-unknown} ipv6=${egress_ipv6_available:-unknown}"
+        install_xray || return 1
+        configure_xray || return 1
         enable_bbr
         add_alias_if_missing
     fi
-
-    # Handle realm installation (can be combined with either xray or sing-box)
     if [[ "$realm_mode" -eq 1 ]]; then
         initialize_ip_from_netstack
-        install_realm
-        configure_realm
-        restart_realm_service
+        install_realm || return 1
+        configure_realm || return 1
+        restart_realm_service || return 1
     fi
-
-    result_sing_box_mode="$sing_box_mode"
-    output_results
-    info "总用时 / Elapsed Time:  ${green}$SECONDS 秒${none}"
-    # info "日志文件 / Log File:  ${green}$LOG_FILE${none}"
-    info "下次可以直接用别名${cyan}nokey${none}启动本脚本最新版 / Next time just run ${cyan}nokey${none} to use the latest version"
-    echo -e "---------- ${cyan}live free or die hard${none} -------------" | tee -a "$LOG_FILE"
+    output_results || return 1
+    info "总用时 / Elapsed: ${SECONDS}s"
+    log_info "event=run_complete duration_s=$SECONDS"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]] || [[ -n "${BASH_EXECUTION_STRING:-}" ]]; then

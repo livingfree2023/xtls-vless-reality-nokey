@@ -16,7 +16,10 @@ else
 fi
 
 dry_run=0
-. /etc/os-release
+if [[ -r /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+fi
 
 show_help() {
     echo "Usage: bbr.sh [--dry-run]"

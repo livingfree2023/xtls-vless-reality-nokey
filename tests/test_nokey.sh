@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034,SC2154,SC2317,SC2030,SC2031  # mock globals/functions read indirectly by sourced nokey.sh code; subshell-write/read pairs are intentional
+# shellcheck disable=SC2034,SC2154,SC2317,SC2030,SC2031,SC2329  # mock globals/functions read indirectly by sourced nokey.sh code; subshell-write/read pairs are intentional
 set -euo pipefail
 
 # *_url vars below are assigned inside generate_share_links (sourced script).
@@ -12,6 +12,34 @@ source "$REPO_ROOT/nokey.sh"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
+
+# The default output must give Mihomo a REALITY-compatible Chrome fingerprint.
+fingerprint_dir="$(mktemp -d)"
+if (
+  cd "$fingerprint_dir" || exit 1
+  netstack="4"
+  ip="198.51.100.10"
+  IPv6=""
+  port="443"
+  domain="example.com"
+  uuid="test-uuid"
+  public_key="test-pbk"
+  shortid="abcd"
+  current_hostname="testhost"
+  mldsa_enabled=0
+  addsocks_mode=0
+  check_service_status() { :; }
+  print_service_commands() { :; }
+  output_results >/dev/null 2>&1
+  grep -q 'fp=chrome' "$URL_FILE" \
+    && grep -q 'client-fingerprint: chrome' "$URL_FILE" \
+    && ! grep -q 'fp=random\|client-fingerprint: random' "$URL_FILE"
+); then
+  pass "default REALITY fingerprint is chrome"
+else
+  fail "share link and Mihomo config should use chrome by default"
+fi
+rm -rf "$fingerprint_dir"
 
 # Test 1: netstack=4 resolves IP after detection values exist
 netstack=""
@@ -235,7 +263,6 @@ pass "parse_args --remove flag"
 share_dir="$(mktemp -d)"
 if (
   cd "$share_dir" || exit 1
-  sing_box_mode=0
   netstack="6"
   ip="2001:db8::1"
   port="443"
@@ -259,7 +286,6 @@ rm -rf "$share_dir"
 share_dir="$(mktemp -d)"
 if (
   cd "$share_dir" || exit 1
-  sing_box_mode=0
   netstack="4"
   ip="198.51.100.10"
   port="443"
@@ -288,7 +314,6 @@ if command -v script >/dev/null 2>&1 && command -v mktemp >/dev/null 2>&1; then
   cat > "$tmp_script" <<'EOF'
 cd "$1" || exit 1
 source "$2" || exit 1
-sing_box_mode=0
 netstack=4
 ip='198.51.100.10'
 port='12345'
@@ -454,7 +479,6 @@ fi
 share_dir="$(mktemp -d)"
 if (
   cd "$share_dir" || exit 1
-  sing_box_mode=0
   netstack="4"
   ip="198.51.100.10"
   IPv6="2001:db8::10"
@@ -484,7 +508,6 @@ rm -rf "$share_dir"
 share_dir="$(mktemp -d)"
 if (
   cd "$share_dir" || exit 1
-  sing_box_mode=0
   netstack="6"
   ip="[2001:db8::10]"
   IPv6="2001:db8::10"
@@ -785,6 +808,7 @@ JSON
     socks_port=""
     is_tcp_port_unused() { return 0; }
     restart_xray_service() { :; }
+    xray() { return 0; }  # Unit fixture accepts validation; real Xray is covered separately.
     initialize_ip_from_netstack() { ip="198.51.100.80"; }
     output_socks_proxy() { :; }
     patch_existing_xray_config >/dev/null
@@ -816,7 +840,12 @@ if command -v jq >/dev/null 2>&1; then
     socks_port=""
     is_tcp_port_unused() { return 0; }
     prepare_socks_inbound
+    egress_ipv4_available=1
+    egress_ipv6_available=1
+    default_route_choice=4
     build_xray_config >/dev/null
+    [[ ! -e "$xray_config_path" ]] || exit 1
+    xray_config_path="$pending_xray_config"
     patch_jq_source=""
     patch_cleanup=""
     resolve_jq_config_source
@@ -845,6 +874,8 @@ if command -v jq >/dev/null 2>&1; then
     printf '%s\n' '{"log":{"access":"/tmp/xray_access.log","error":"/tmp/xray_error.log","loglevel":"error"}}' > "$xray_config_path"
     patch_jq_source=""
     patch_cleanup=""
+    xray() { return 0; }
+    restart_xray_service() { :; }
     configure_xray_journald_logging >/dev/null
     [[ "$(jq -r '.log | has("access")' "$xray_config_path")" == "false" ]]
     [[ "$(jq -r '.log | has("error")' "$xray_config_path")" == "false" ]]
@@ -858,62 +889,19 @@ else
   pass "journald migration test skipped (jq unavailable)"
 fi
 
-# Test 42: --singbox and --singbox-only select distinct installation modes
-if (
-  arg_count=0
-  sing_box_mode=0
-  sing_box_only=0
-  parse_args --singbox
-  [[ "$sing_box_mode" -eq 1 && "$sing_box_only" -eq 0 ]]
-); then
-  pass "--singbox selects combined mode"
-else
-  fail "--singbox should install Sing-box alongside Xray"
-fi
-
-if (
-  arg_count=0
-  sing_box_mode=0
-  sing_box_only=0
-  parse_args --singbox-only
-  [[ "$sing_box_mode" -eq 1 && "$sing_box_only" -eq 1 ]]
-); then
-  pass "--singbox-only selects standalone mode"
-else
-  fail "--singbox-only should skip Xray"
-fi
-
-# Test 43: dry-run reports both services for --singbox, but not for --singbox-only
-if (
-  ID="alpine"
-  ID_LIKE=""
-  realm_mode=0
-  realm_only=0
-  sing_box_mode=1
-  sing_box_only=0
-  preview="$(dry_run_preview 2>&1)"
-  [[ "$preview" == *"=== Sing-box"* ]]
-  [[ "$preview" == *"=== Xray"* ]]
-); then
-  pass "--singbox dry-run includes Xray and Sing-box"
-else
-  fail "--singbox dry-run should include both services"
-fi
-
-if (
-  ID="alpine"
-  ID_LIKE=""
-  realm_mode=0
-  realm_only=0
-  sing_box_mode=1
-  sing_box_only=1
-  preview="$(dry_run_preview 2>&1)"
-  [[ "$preview" == *"=== Sing-box"* ]]
-  [[ "$preview" != *"=== Xray"* ]]
-); then
-  pass "--singbox-only dry-run excludes Xray"
-else
-  fail "--singbox-only dry-run should exclude Xray"
-fi
+# Removed Sing-box flags must fail explicitly before touching output files.
+for removed_flag in --singbox --singbox-only; do
+  removed_dir="$(mktemp -d)"
+  printf 'keep-log\n' > "$removed_dir/nokey.log"
+  printf 'keep-url\n' > "$removed_dir/nokey.url"
+  if (cd "$removed_dir" && bash "$REPO_ROOT/nokey.sh" "$removed_flag") > "$removed_dir/output" 2>&1; then
+    fail "$removed_flag should fail"
+  fi
+  grep -Eq 'removed|已移除' "$removed_dir/output" || fail "$removed_flag should explain removal"
+  [[ "$(cat "$removed_dir/nokey.log")" == "keep-log" ]] || fail "$removed_flag changed logs"
+  [[ "$(cat "$removed_dir/nokey.url")" == "keep-url" ]] || fail "$removed_flag changed URLs"
+  rm -rf "$removed_dir"
+done
+pass "removed Sing-box flags fail without side effects"
 
 echo "All tests passed."

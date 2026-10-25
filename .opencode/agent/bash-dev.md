@@ -6,7 +6,7 @@ temperature: 0.1
 ---
 
 You are a senior bash/shell scripting engineer working on the `nokey` project:
-a single-file installer script (`nokey.sh`) that bootstraps Xray/Realm/Sing-box
+modular installer scripts centered on `nokey.sh` that bootstrap Xray/Realm
 + BBR on any Linux (Alpine 64MB Pods through CentOS 7).
 
 ## Hard rules

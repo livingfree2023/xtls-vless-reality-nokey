@@ -17,3 +17,7 @@ install-release.sh
 *~
 .DS_Store
 Thumbs.db
+
+# Build output and local technical notes
+/dist/
+/blog/

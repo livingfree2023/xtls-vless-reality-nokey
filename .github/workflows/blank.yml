@@ -1,4 +1,4 @@
-name: Sync Latest Xray, Realm, and Sing-box Binaries
+name: Sync Latest Xray and Realm Binaries
 
 on:
   schedule:
@@ -14,7 +14,7 @@ jobs:
     steps:
       - name: Create Temp Distribution Directory
         run: |
-          mkdir -p "${RUNNER_TEMP}/bin_dist" "${RUNNER_TEMP}/xray_extract_amd64" "${RUNNER_TEMP}/xray_extract_arm64" "${RUNNER_TEMP}/realm_extract" "${RUNNER_TEMP}/singbox_extract"
+          mkdir -p "${RUNNER_TEMP}/bin_dist" "${RUNNER_TEMP}/xray_extract_amd64" "${RUNNER_TEMP}/xray_extract_arm64" "${RUNNER_TEMP}/realm_extract"
 
       - name: Get Upstream Version and Download Artifacts
         id: upstream
@@ -81,25 +81,6 @@ jobs:
           echo "sha_realm_musl_amd64=$(cat "${RUNNER_TEMP}/sha_realm_musl_amd64.txt")" >> "$GITHUB_OUTPUT"
           echo "sha_realm_musl_arm64=$(cat "${RUNNER_TEMP}/sha_realm_musl_arm64.txt")" >> "$GITHUB_OUTPUT"
 
-          # 6) Download and extract sing-box binary from SagerNet/sing-box
-          singbox_tag="$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name')"
-          echo "singbox_tag=${singbox_tag}" >> "$GITHUB_OUTPUT"
-          echo "Sing-box upstream tag: ${singbox_tag}"
-
-          wget -q "https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-${singbox_tag#v}-linux-amd64.tar.gz" -O "${RUNNER_TEMP}/singbox_amd64.tar.gz"
-          tar -xzf "${RUNNER_TEMP}/singbox_amd64.tar.gz" --strip-components=1 -C "${RUNNER_TEMP}/singbox_extract"
-          cp "${RUNNER_TEMP}/singbox_extract"/sing-box "${RUNNER_TEMP}/bin_dist"/sing-box_amd64
-
-          wget -q "https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-${singbox_tag#v}-linux-arm64.tar.gz" -O "${RUNNER_TEMP}/singbox_arm64.tar.gz"
-          tar -xzf "${RUNNER_TEMP}/singbox_arm64.tar.gz" --strip-components=1 -C "${RUNNER_TEMP}/singbox_extract"
-          cp "${RUNNER_TEMP}/singbox_extract"/sing-box "${RUNNER_TEMP}/bin_dist"/sing-box_arm64
-
-          # 7) Create deterministic checksums from sing-box binaries
-          sha256sum "${RUNNER_TEMP}/bin_dist/sing-box_amd64" | awk '{print $1}' > "${RUNNER_TEMP}/sha_singbox_amd64.txt"
-          sha256sum "${RUNNER_TEMP}/bin_dist/sing-box_arm64" | awk '{print $1}' > "${RUNNER_TEMP}/sha_singbox_arm64.txt"
-
-          echo "sha_singbox_amd64=$(cat "${RUNNER_TEMP}/sha_singbox_amd64.txt")" >> "$GITHUB_OUTPUT"
-          echo "sha_singbox_arm64=$(cat "${RUNNER_TEMP}/sha_singbox_arm64.txt")" >> "$GITHUB_OUTPUT"
 
       - name: Compare With Current Latest Release
         id: compare
@@ -120,9 +101,6 @@ jobs:
           current_sha_realm_arm64="$(printf '%s\n' "${current_body}" | grep '^SHA256-realm_arm64:' | sed -E 's/^SHA256-realm_arm64:[[:space:]]*//' || true)"
           current_sha_realm_musl_amd64="$(printf '%s\n' "${current_body}" | grep '^SHA256-realm_musl_amd64:' | sed -E 's/^SHA256-realm_musl_amd64:[[:space:]]*//' || true)"
           current_sha_realm_musl_arm64="$(printf '%s\n' "${current_body}" | grep '^SHA256-realm_musl_arm64:' | sed -E 's/^SHA256-realm_musl_arm64:[[:space:]]*//' || true)"
-          current_sha_singbox_amd64="$(printf '%s\n' "${current_body}" | grep '^SHA256-sing-box_amd64:' | sed -E 's/^SHA256-sing-box_amd64:[[:space:]]*//' || true)"
-          current_sha_singbox_arm64="$(printf '%s\n' "${current_body}" | grep '^SHA256-sing-box_arm64:' | sed -E 's/^SHA256-sing-box_arm64:[[:space:]]*//' || true)"
-          current_singbox_tag="$(printf '%s\n' "${current_body}" | grep '^Sing-box-Upstream-Tag:' | sed -E 's/^Sing-box-Upstream-Tag:[[:space:]]*//' || true)"
 
           changed="false"
           if [ "${current_tag}" != "${{ steps.upstream.outputs.upstream_tag }}" ]; then
@@ -155,15 +133,6 @@ jobs:
           if [ "${current_sha_realm_musl_arm64}" != "${{ steps.upstream.outputs.sha_realm_musl_arm64 }}" ]; then
             changed="true"
           fi
-          if [ "${current_singbox_tag}" != "${{ steps.upstream.outputs.singbox_tag }}" ]; then
-            changed="true"
-          fi
-          if [ "${current_sha_singbox_amd64}" != "${{ steps.upstream.outputs.sha_singbox_amd64 }}" ]; then
-            changed="true"
-          fi
-          if [ "${current_sha_singbox_arm64}" != "${{ steps.upstream.outputs.sha_singbox_arm64 }}" ]; then
-            changed="true"
-          fi
 
           echo "changed=${changed}" >> "$GITHUB_OUTPUT"
           echo "Current tag: ${current_tag:-<none>}"
@@ -179,8 +148,8 @@ jobs:
         if: steps.compare.outputs.changed == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.upstream.outputs.upstream_tag }}-${{ steps.upstream.outputs.realm_tag }}-${{ steps.upstream.outputs.singbox_tag }}
-          name: xray ${{ steps.upstream.outputs.upstream_tag }} realm ${{ steps.upstream.outputs.realm_tag }} sing-box ${{ steps.upstream.outputs.singbox_tag }}
+          tag_name: ${{ steps.upstream.outputs.upstream_tag }}-${{ steps.upstream.outputs.realm_tag }}
+          name: xray ${{ steps.upstream.outputs.upstream_tag }} realm ${{ steps.upstream.outputs.realm_tag }}
           body: |
             Automatic sync with latest Xray-core release.
             Upstream-Tag: ${{ steps.upstream.outputs.upstream_tag }}
@@ -193,14 +162,10 @@ jobs:
             SHA256-realm_arm64: ${{ steps.upstream.outputs.sha_realm_arm64 }}
             SHA256-realm_musl_amd64: ${{ steps.upstream.outputs.sha_realm_musl_amd64 }}
             SHA256-realm_musl_arm64: ${{ steps.upstream.outputs.sha_realm_musl_arm64 }}
-            Sing-box-Upstream-Tag: ${{ steps.upstream.outputs.singbox_tag }}
-            SHA256-sing-box_amd64: ${{ steps.upstream.outputs.sha_singbox_amd64 }}
-            SHA256-sing-box_arm64: ${{ steps.upstream.outputs.sha_singbox_arm64 }}
           files: |
             ${{ runner.temp }}/bin_dist/xray*
             ${{ runner.temp }}/bin_dist/geo*.dat
             ${{ runner.temp }}/bin_dist/realm*
-            ${{ runner.temp }}/bin_dist/sing-box*
             
           fail_on_unmatched_files: true
           make_latest: true

@@ -29,10 +29,11 @@ Run a single command, sit back, and wait. No chatter, no fuss—super fast. Read
 8. Shows help with `--help`  
 9. Outputs only minimal steps—detailed logs saved to a file  
 10. Generates QR codes  
-11. `--menu` opens the Realm, SOCKS, WARP, Sing-box, BBR, acme.sh certificate, and Hysteria2 feature menu
+11. `--menu` opens the Realm, SOCKS, WARP, BBR, acme.sh certificate, and Hysteria2 feature menu
 12. Feature implementations are separate scripts and can be run with one-liners
 13. Auto-probes a feasible REALITY target SNI (mirrors 3x-ui's REALITY Target Scanner; verifies TLS 1.3 + HTTP/2)
 14. Installs `jq` automatically before JSON-based SOCKS/WARP operations when missing
+15. `--default-route` selects IPv4 or IPv6 preference for dual-stack VPS egress
 
 ---
 
@@ -74,7 +75,6 @@ The features can also be run directly without installing the scripts first:
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.sh) --remote=1.2.3.4:443
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-socks.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-warp.sh)
-bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/singbox.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/bbr.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/acme-cert.sh) --domain=example.com
 HYSTERIA_CF_TOKEN=your-cloudflare-token bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com
@@ -85,6 +85,27 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 Each entrypoint loads `nokey-common.sh`; JSON-based features install `jq` through the detected package manager when it is missing.
 
 The acme.sh menu entry uses Cloudflare DNS validation when a token is entered, otherwise it uses standalone HTTP-01 on port 80. Hysteria2 chooses a random free port above 10000 by default (`--port` overrides it). Providing `HYSTERIA_CF_TOKEN` or entering a token uses Hysteria's built-in ACME DNS challenge; otherwise it detects certificates under `/etc/hysteria/` and `~/.acme.sh/`, then asks for certificate and key paths if needed. After the service is active, `nokey.url` contains a `hysteria2://` share URL and a Mihomo/Clash YAML proxy entry, followed by systemd/OpenRC restart and status commands.
+
+---
+
+# 🌐 Default egress on a dual-stack VPS
+
+```bash
+nokey --default-route
+```
+
+Choose IPv4 first or IPv6 first from the menu. TCP connections try the selected address family first and can fall back to the other family. UDP and connections to literal IP addresses do not promise this fallback.
+
+For unattended use:
+
+```bash
+nokey --default-route=4
+nokey --default-route=6
+```
+
+`--netstack=4|6` chooses the server address clients connect to. `--default-route` chooses Xray's preferred address family when connecting to destination websites. Dual-stack DNS retains both A and AAAA queries. Existing configuration is backed up and validated before the selection is applied.
+
+Sing-box installation has been removed. The old `--singbox` and `--singbox-only` options fail before making system changes. Updating the script does not automatically uninstall an existing Sing-box service.
 
 ---
 
@@ -141,4 +162,6 @@ _Forked from https://github.com/crazypeace/ — thanks to the original author._
 
 ---
 
-If you’d like, I can help you write a localized README that switches between this translation and the original using links or folders. Just say the word!
+### Diagnostic logs
+
+`nokey.log` records sanitized events with timestamps, levels and durations; connection details are saved in `nokey.url`. Both files use mode `0600`. Set `NOKEY_LOG_LEVEL=DEBUG` for detailed diagnostics. Supported levels are `DEBUG`, `INFO` (default), `WARN`, and `ERROR`.

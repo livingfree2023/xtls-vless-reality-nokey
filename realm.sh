@@ -33,7 +33,10 @@ IPv6=""
 ip=""
 manager=""
 
-. /etc/os-release
+if [[ -r /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+fi
 
 show_help() {
     echo "Usage: realm.sh [--remote=HOST:PORT] [--listen=ADDRESS] [--force] [--remove] [--dry-run]"

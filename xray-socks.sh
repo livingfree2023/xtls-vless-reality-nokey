@@ -46,7 +46,10 @@ change_sni_mode=0
 addsocks_mode=1
 manager=""
 
-. /etc/os-release
+if [[ -r /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+fi
 
 resolve_jq_config_source() {
     local config_path="$xray_config_path"

@@ -29,10 +29,11 @@
 8. نمایش راهنما با `--help`  
 9. فقط مراحل ساده را نشان می‌دهد—لاگ کامل در فایل ذخیره می‌شود  
 10. تولید QR کد
-11. گزینه `--menu` برای انتخاب Realm، SOCKS، WARP، Sing-box، BBR، گواهی acme.sh و Hysteria2
+11. گزینه `--menu` برای انتخاب Realm، SOCKS، WARP، BBR، گواهی acme.sh و Hysteria2
 12. هر قابلیت به‌صورت اسکریپت مستقل نیز قابل اجراست
 13. انتخاب خودکار SNI هدف REALITY مناسب (الهام‌گرفته از REALITY Target Scanner پروژه 3x-ui؛ بررسی TLS 1.3 و HTTP/2)
 14. در صورت نبودن `jq`، قابلیت‌های JSONمحور آن را خودکار نصب می‌کنند
+15. گزینهٔ `--default-route` اولویت خروجی IPv4 یا IPv6 را در VPS دوپشته انتخاب می‌کند
 
 ---
 
@@ -73,7 +74,6 @@ nokey --menu
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.sh) --remote=1.2.3.4:443
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-socks.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-warp.sh)
-bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/singbox.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/bbr.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/acme-cert.sh) --domain=example.com
 HYSTERIA_CF_TOKEN=your-cloudflare-token bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/hysteria2.sh) --domain=example.com
@@ -82,6 +82,27 @@ HYSTERIA_CF_TOKEN=your-cloudflare-token bash <(curl -fsSL https://raw.githubuser
 اسکریپت‌ها فایل مشترک `nokey-common.sh` را بارگذاری می‌کنند و قابلیت‌های JSONمحور در صورت نیاز `jq` را از مدیر بسته سیستم نصب می‌کنند.
 
 گزینه acme.sh در منو، در صورت وارد کردن توکن Cloudflare از DNS-01 و در غیر این صورت از HTTP-01 مستقل روی پورت ۸۰ استفاده می‌کند و گواهی را در `/etc/hysteria/` قرار می‌دهد. Hysteria2 به‌صورت پیش‌فرض یک پورت آزاد تصادفی بالاتر از ۱۰۰۰۰ انتخاب می‌کند و با `--port` قابل تغییر است. برای Hysteria2، با ارائه `HYSTERIA_CF_TOKEN` یا وارد کردن توکن، ACME داخلی Hysteria از DNS-01 استفاده می‌کند؛ در غیر این صورت ابتدا مسیرهای `/etc/hysteria/` و `~/.acme.sh/` بررسی شده و سپس مسیر گواهی و کلید خصوصی پرسیده می‌شود. پس از فعال شدن سرویس، لینک `hysteria2://`، تنظیمات YAML سازگار با Mihomo/Clash و دستورات راه‌اندازی مجدد و بررسی وضعیت systemd/OpenRC در `nokey.url` نمایش داده می‌شوند.
+
+---
+
+# 🌐 خروجی پیش‌فرض در VPS دوپشته
+
+```bash
+nokey --default-route
+```
+
+در منو می‌توانید اولویت IPv4 یا IPv6 را انتخاب کنید. اتصال‌های TCP ابتدا خانوادهٔ آدرس انتخاب‌شده را امتحان می‌کنند و در صورت نیاز می‌توانند به خانوادهٔ دیگر برگردند. این بازگشت برای UDP یا مقصدهایی که مستقیماً آدرس IP هستند تضمین نمی‌شود.
+
+برای اجرای بدون تعامل:
+
+```bash
+nokey --default-route=4
+nokey --default-route=6
+```
+
+گزینهٔ `--netstack=4|6` آدرس سروری را انتخاب می‌کند که کلاینت به آن متصل می‌شود. گزینهٔ `--default-route` اولویت خروجی Xray به وب‌سایت مقصد را تعیین می‌کند. DNS دوپشته هر دو پرس‌وجوی A و AAAA را حفظ می‌کند. پیش از اعمال انتخاب، از تنظیمات موجود پشتیبان گرفته و اعتبار آن بررسی می‌شود.
+
+قابلیت نصب Sing-box حذف شده است. گزینه‌های قدیمی `--singbox` و `--singbox-only` پیش از تغییر سیستم خطا می‌دهند. به‌روزرسانی اسکریپت، سرویس Sing-box موجود را خودکار حذف نمی‌کند.
 
 ---
 
@@ -135,3 +156,7 @@ nokey --realm-only --remove  # حذف فقط Realm
 اشتباه اجتناب‌ناپذیر است—ممنون بابت راهنمایی‌ها!
 
 _فورک شده از https://github.com/crazypeace/ — با تشکر از نویسنده اصلی_
+
+### گزارش عیب‌یابی
+
+فایل `nokey.log` رویدادهای پاک‌سازی‌شده با زمان، سطح و مدت اجرا را ثبت می‌کند. اطلاعات اتصال در `nokey.url` ذخیره می‌شود و دسترسی هر دو فایل `0600` است. برای جزئیات بیشتر `NOKEY_LOG_LEVEL=DEBUG` را تنظیم کنید؛ سطوح `DEBUG`، `INFO` (پیش‌فرض)، `WARN` و `ERROR` پشتیبانی می‌شوند.

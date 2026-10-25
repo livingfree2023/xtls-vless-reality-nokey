@@ -3,12 +3,18 @@
 ## What this project is
 
 Several one-shot Bash entrypoints sharing `nokey-common.sh`. `nokey.sh` keeps
-the default Xray VLESS + Reality + BBR installation behavior; Realm, Sing-box,
+the default Xray VLESS + Reality + BBR installation behavior; Realm,
 SOCKS, WARP, standalone BBR, ACME certificates, and Hysteria2 are separate
 feature entrypoints. All run from `curl | bash` or process substitution and
 must work on minimal environments
 (Alpine Pods with 64MB RAM, busybox tools, OpenRC), Debian/Ubuntu, CentOS/Rocky,
 Fedora, AlmaLinux.
+
+## Context routing
+
+- `docs/ARCHITECTURE.md`: configuration flow, egress/DNS and diagnostic boundaries.
+- `docs/TESTING.md`: unit, module, terminal and opt-in real network verification.
+- `specs/2026-10-25-output-logs-default-route/`: current feature contract and handover.
 
 ## Non-negotiables
 
@@ -46,10 +52,12 @@ Fedora, AlmaLinux.
 ## Verification (always run before declaring done)
 
 ```bash
-for script in nokey.sh nokey-common.sh realm.sh singbox.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh; do bash -n "$script"; done
-shellcheck -x nokey.sh nokey-common.sh realm.sh singbox.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh
+for script in nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh; do bash -n "$script"; done
+shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh
 bash tests/test_nokey.sh
 bash tests/test_features.sh
+bash tests/test_logging.sh
+bash tests/test_default_route.sh
 ```
 
 All tests must pass. Tests mock globals (e.g. `IPv4`, `ID`, `ID_LIKE`) and stub
@@ -60,6 +68,7 @@ network functions — never run the real installer in CI.
 - Do NOT modify `nokey.sh` behavior for the host you are running on — changes
   must be generic across all supported distros.
 - Do NOT touch `.github/workflows/` (binary release pipeline) unless asked.
+- Feature specs: `specs/2026-10-25-output-logs-default-route/` covers output, logging, and default egress behavior.
 - Version bumps: `readonly SCRIPT_VERSION="YYYY.MM"` follows the existing scheme.
 
 ## Model routing (opencode)
