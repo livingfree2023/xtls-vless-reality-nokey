@@ -71,6 +71,17 @@ trap 'rm -rf "$fixture_dir"' EXIT
     }
     install_xray_yaml_tool "$yq_target"
     xray_yq_is_compatible "$yq_target"
+    mkdir -p "$fixture_dir/home"
+    : > "$fixture_dir/home/.bashrc"
+    : > "$fixture_dir/home/.zshrc"
+    HOME="$fixture_dir/home" configure_yq_shell_path "$yq_target"
+    HOME="$fixture_dir/home" configure_yq_shell_path "$yq_target"
+    [[ "$(grep -c 'export PATH=' "$fixture_dir/home/.bashrc")" -eq 1 ]]
+    [[ "$(grep -c 'export PATH=' "$fixture_dir/home/.zshrc")" -eq 1 ]]
+    [[ "$PATH" == "$fixture_dir:"* ]]
+    bash -n "$fixture_dir/home/.bashrc" "$fixture_dir/home/.zshrc"
+    if command -v zsh >/dev/null 2>&1; then zsh -n "$fixture_dir/home/.zshrc"; fi
+    [[ ! -e "$fixture_dir/home/.profile" ]]
     rm -f "$yq_target"
     xray_yq_expected_sha256() { printf '%064d\n' 0; }
     if install_xray_yaml_tool "$yq_target" >/dev/null 2>&1; then exit 1; fi

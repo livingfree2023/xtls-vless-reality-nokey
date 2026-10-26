@@ -80,6 +80,23 @@ xray_yq_is_compatible() {
     [[ "$version" == *"version ${NOKEY_YQ_VERSION}"* ]]
 }
 
+configure_yq_shell_path() {
+    local tool_path="${1:-$NOKEY_YQ_INSTALL_PATH}" tool_dir="" rc_file="" export_line=""
+    xray_yq_is_compatible "$tool_path" || return 1
+    tool_dir="$(dirname "$tool_path")"
+    case ":${PATH}:" in
+        *":${tool_dir}:"*) ;;
+        *) PATH="${tool_dir}:${PATH}"; export PATH ;;
+    esac
+    export_line="case \":\$PATH:\" in *\":${tool_dir}:\"*) ;; *) export PATH=\"${tool_dir}:\$PATH\" ;; esac"
+    for rc_file in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+        [[ -f "$rc_file" ]] || continue
+        if ! grep -Fxq "$export_line" "$rc_file"; then
+            printf '\n%s\n' "$export_line" >> "$rc_file" || return 1
+        fi
+    done
+}
+
 install_xray_yaml_tool() (
     local target="${1:-$NOKEY_YQ_INSTALL_PATH}" install_dir="" stage="" platform="" arch=""
     local expected="" actual="" source_url=""
@@ -123,6 +140,9 @@ require_xray_yaml_tool() {
     for candidate in "$NOKEY_YQ_INSTALL_PATH" "$(command -v yq 2>/dev/null || true)"; do
         if [[ -n "$candidate" ]] && xray_yq_is_compatible "$candidate"; then
             xray_yaml_tool_path="$candidate"
+            if [[ "$candidate" == "$NOKEY_YQ_INSTALL_PATH" ]]; then
+                configure_yq_shell_path "$candidate" || warn "Could not add yq to shell PATH; check ~/.bashrc and ~/.zshrc"
+            fi
             return 0
         fi
     done
@@ -132,6 +152,7 @@ require_xray_yaml_tool() {
         return 1
     fi
     xray_yaml_tool_path="$NOKEY_YQ_INSTALL_PATH"
+    configure_yq_shell_path "$xray_yaml_tool_path" || warn "Could not add yq to shell PATH; check ~/.bashrc and ~/.zshrc"
     task_done
 }
 

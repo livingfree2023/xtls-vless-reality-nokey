@@ -75,6 +75,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 
 这些脚本会自动加载`nokey-common.sh`。需要JSON配置处理的功能会先检查并安装`jq`。
 
+脚本安装的 `yq` 位于 `/usr/local/libexec/nokey/yq`。安装后会在已有的 `~/.bashrc` 和 `~/.zshrc` 中加入 PATH 设置；新开终端即可直接运行 `yq`，当前终端需执行 `source ~/.bashrc` 或 `source ~/.zshrc`。
+
 默认安装与菜单选项 1 行为相同：有本机全局 IPv6 时，Reality 与 Shadowsocks 2022 自动作为两个入站写入同一 Xray 配置；无 IPv6 时仅安装 Reality。Shadowsocks 使用 `2022-blake3-aes-128-gcm`，仅监听本机全局 IPv6 地址。配置经 Xray 校验并成功重启后输出 `ss://` 链接。
 
 菜单中的acme.sh功能使用Cloudflare DNS验证（输入API token时）或80端口HTTP验证，并把证书安装到`/etc/hysteria/`。Hysteria2默认选择10000以上的随机空闲端口（可用`--port`指定），如果提供Cloudflare token，会优先使用内置ACME DNS验证；否则检测该目录和`~/.acme.sh/`中的证书，找不到时提示输入证书和私钥路径。服务启动成功后，`nokey.url`会保存链接和Mihomo/Clash YAML配置，并输出systemd/OpenRC重启和状态检查命令。

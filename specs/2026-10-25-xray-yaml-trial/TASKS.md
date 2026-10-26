@@ -8,7 +8,8 @@
 - [x] Validate generated YAML with Xray 26.10.21 in an isolated temporary directory.
 - [x] Review standalone WARP/SOCKS format paths and update documentation.
 - [x] Auto-install and verify the YAML tool before YAML operations, including fresh installation.
+- [x] Expose the verified private yq directory through existing Bash/Zsh rc files, idempotently.
 
 ## Handover 备忘
 
-The branch contains the YAML trial. Automatic installation downloads a pinned yq v4.54.1 binary into NoKey's private tool directory, verifies its SHA-256 and version, then atomically publishes it. Offline tests cover success, checksum rejection and stage cleanup; a real macOS download to `/tmp` also passed. Xray 26.10.21 accepts generated YAML with and without an initial SOCKS inbound. A real Linux/OpenRC service smoke test remains before deployment. YAML comments are lost after a jq-based patch because that path converts through JSON.
+The branch contains the YAML trial. Automatic installation downloads a pinned yq v4.54.1 binary into NoKey's private tool directory, verifies its SHA-256 and version, then atomically publishes it. Existing Bash/Zsh rc files receive an idempotent PATH export; the current parent shell still requires `source` or a new session. Offline tests cover success, checksum rejection, stage cleanup, and PATH export behavior; a real macOS download to `/tmp` also passed. Xray 26.10.21 accepts generated YAML with and without an initial SOCKS inbound. A real Linux/OpenRC service smoke test remains before deployment. YAML comments are lost after a jq-based patch because that path converts through JSON.

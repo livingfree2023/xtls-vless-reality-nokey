@@ -10,7 +10,7 @@
 
 ## Dependency and limits
 
-- YAML read/patch conversion uses Mike Farah `yq` v4.54.1. The installer automatically downloads a pinned, SHA-256 verified binary to `/usr/local/libexec/nokey/yq` when a matching version is unavailable. Existing system `yq` commands are left untouched.
+- YAML read/patch conversion uses Mike Farah `yq` v4.54.1. The installer automatically downloads a pinned, SHA-256 verified binary to `/usr/local/libexec/nokey/yq` when a matching version is unavailable. After verifying the private binary, it adds that directory to the current process PATH and writes an idempotent PATH export to existing `~/.bashrc` and `~/.zshrc` files. It does not create missing rc files or modify a system `yq` binary. The launching shell must source its rc file or start a new session to see the new PATH.
 - Conversion through JSON drops YAML comments and formatting on patched files. This is a trial limitation.
 - The standalone WARP script retains its existing direct service restart behavior; the format conversion does not redesign that workflow.
 
