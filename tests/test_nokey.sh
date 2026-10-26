@@ -41,6 +41,38 @@ else
 fi
 rm -rf "$fingerprint_dir"
 
+share_stage_dir="$(mktemp -d)"
+if (
+  cd "$share_stage_dir" || exit 1
+  printf 'previous-share\n' > "$URL_FILE"
+  begin_share_output || exit 1
+  printf 'new-share\n' >> "$share_output_file"
+  [[ "$(cat "$URL_FILE")" == previous-share ]] || exit 1
+  commit_share_output || exit 1
+  [[ "$(cat "$URL_FILE")" == new-share ]]
+); then
+  pass "share output replaces previous file only after commit"
+else
+  fail "share output staging did not preserve previous file"
+fi
+rm -rf "$share_stage_dir"
+
+interrupted_share_dir="$(mktemp -d)"
+printf 'previous-share\n' > "$interrupted_share_dir/nokey.url"
+if (
+  cd "$interrupted_share_dir" || exit 1
+  begin_share_output || exit 1
+  printf 'partial-share\n' >> "$share_output_file"
+  exit 1
+); then
+  fail "interrupted share generation unexpectedly succeeded"
+fi
+[[ "$(cat "$interrupted_share_dir/nokey.url")" == previous-share ]] \
+  && [[ -z "$(find "$interrupted_share_dir" -name 'nokey.url.stage.*' -print)" ]] \
+  || fail "interruption changed saved shares or left a stage file"
+pass "interrupted share generation preserves previous file"
+rm -rf "$interrupted_share_dir"
+
 # Test 1: netstack=4 resolves IP after detection values exist
 netstack=""
 ip=""
