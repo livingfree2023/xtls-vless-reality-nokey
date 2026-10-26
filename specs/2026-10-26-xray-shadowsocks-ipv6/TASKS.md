@@ -1,10 +1,10 @@
 # Tasks
 
 - [x] Verify Xray's official Shadowsocks 2022 inbound schema and key length.
-- [x] Implement the Xray config patch and menu action.
-- [x] Run offline verification; live VPS verification requires a host with global IPv6.
+- [x] Integrate Shadowsocks into the Reality config generation path.
 - [x] Add automatic Shadowsocks inbound to fresh Reality installs when local global IPv6 exists.
 - [x] Verify two-inbound and no-IPv6 generated configs, then run the required shell checks.
+- [x] Remove the separate menu action, standalone script, and obsolete tests/docs.
 
 ## Handover 备忘
 

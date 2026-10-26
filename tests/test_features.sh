@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-scripts=(nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-shadowsocks.sh xray-warp.sh bbr.sh warp-helper.sh acme-cert.sh hysteria2.sh)
+scripts=(nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh warp-helper.sh acme-cert.sh hysteria2.sh)
 for script in "${scripts[@]}"; do
     [[ -x "$REPO_ROOT/$script" ]] || { echo "FAIL: $script is not executable"; exit 1; }
     bash -n "$REPO_ROOT/$script"
@@ -26,33 +26,10 @@ acme_output="$(bash "$REPO_ROOT/acme-cert.sh" --domain=example.com --dry-run)"
 hysteria_output="$(bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --dry-run)"
 [[ "$hysteria_output" == *"Hysteria2 dry-run"* ]]
 [[ "$hysteria_output" == *"Port:"* ]]
-grep -q 'run_feature_script xray-shadowsocks.sh' "$REPO_ROOT/nokey.sh"
-(
-    set +u
-    # shellcheck source=/dev/null
-    source "$REPO_ROOT/xray-shadowsocks.sh"
-    set -u
-    local_global_ipv6_addresses() { printf '%s\n' '2001:db8::10' '2001:db8::11'; }
-    ss_listen=""
-    select_shadowsocks_ipv6
-    [[ "$ss_listen" == '2001:db8::10' ]]
-    ss_listen='::'
-    if select_shadowsocks_ipv6 >/dev/null; then exit 1; fi
-    ss_listen='2001:db8::11'
-    select_shadowsocks_ipv6
-    generate_shadowsocks_password
-    [[ "$(printf '%s' "$ss_password" | base64 -d | wc -c | tr -d ' ')" -eq 16 ]]
-    ss_port=8443
-    ss_password='AAAAAAAAAAAAAAAAAAAAAA=='
-    xray_config_path="$(mktemp /tmp/nokey-ss-config.XXXXXX)"
-    patch_jq_source="$xray_config_path"
-    printf '%s\n' '{"inbounds":[{"tag":"existing","port":443}],"outbounds":[{"protocol":"freedom"}]}' > "$xray_config_path"
-    build_shadowsocks_config
-    jq -e --arg tag "$SHADOWSOCKS_TAG" --arg listen "$ss_listen" \
-        '.inbounds | length == 2 and .[0].tag == "existing" and .[1].tag == $tag and .[1].listen == $listen and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' \
-        "$patch_tmp_out" >/dev/null
-    rm -f "$xray_config_path" "$patch_tmp_out"
-)
+if grep -Eq 'run_feature_script xray-shadowsocks.sh|9\) Add IPv6 Shadowsocks' "$REPO_ROOT/nokey.sh"; then
+    echo "FAIL: Shadowsocks must not have a separate menu action"
+    exit 1
+fi
 hysteria_acme_output="$(HYSTERIA_CF_TOKEN=test-token bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --dry-run)"
 [[ "$hysteria_acme_output" == *"built-in ACME DNS-01"* ]]
 [[ "$(bash "$REPO_ROOT/hysteria2.sh" --help)" == *"--cert-path=PATH"* ]]

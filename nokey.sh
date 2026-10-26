@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.37"
+readonly SCRIPT_VERSION="2026.38"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -1339,7 +1339,6 @@ show_feature_menu() {
         display_result "6) Enable BBR"
         display_result "7) Get SSL certificate with acme.sh"
         display_result "8) Install Hysteria2 server"
-        display_result "9) Add IPv6 Shadowsocks to existing Xray"
         display_result "0) 退出 / Exit"
         read -r -p "Select an option: " choice <&3 || break
         case "$choice" in
@@ -1384,7 +1383,6 @@ show_feature_menu() {
                 unset HYSTERIA_CF_TOKEN
                 break
                 ;;
-            9) run_feature_script xray-shadowsocks.sh; break ;;
             0) break ;;
             *) warn "Invalid menu choice / 无效选择" ;;
         esac
