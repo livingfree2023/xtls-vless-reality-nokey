@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.40"
+readonly SCRIPT_VERSION="2026.41"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -852,10 +852,6 @@ normalize_xray_runtime_permissions() {
 
 load_runtime_vars_from_existing_config() {
     local config_path="$xray_config_path"
-    if [[ ! -f "$config_path" && -f "/usr/local/etc/xray/config.json" ]]; then
-        config_path="/usr/local/etc/xray/config.json"
-        xray_config_path="/usr/local/etc/xray/config.json"
-    fi
     local x25519_output=""
     local jq_error=""
     local jq_target="$config_path"
@@ -2086,10 +2082,6 @@ configure_xray() {
 # $patch_cleanup (if any) for the caller to remove.
 resolve_jq_config_source() {
     local config_path="$xray_config_path"
-    if [[ ! -f "$config_path" && -f "/usr/local/etc/xray/config.json" ]]; then
-        config_path="/usr/local/etc/xray/config.json"
-        xray_config_path="/usr/local/etc/xray/config.json"
-    fi
     patch_jq_source=""
     patch_cleanup=""
     if ! command -v jq >/dev/null 2>&1; then
@@ -2896,23 +2888,13 @@ output_results() {
 # Main function
 main() {
     SECONDS=0
-    local xray_active=0
     local route_status=0
+    local legacy_config="${NOKEY_CONFIG_DIR}/nokey.json"
+    local legacy_backup=""
     parse_args "$@" || return 1
-    if [[ "$xray_config_path" == "$NOKEY_CONFIG_FILE" && ! -f "$xray_config_path" && -f "${NOKEY_CONFIG_DIR}/nokey.json" ]]; then
-        xray_config_path="${NOKEY_CONFIG_DIR}/nokey.json"
-    fi
-    if [[ "$keepconfig" -eq 1 || "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 || "$addsocks_mode" -eq 1 || "$default_route_mode" -eq 1 ]]; then
-        if [[ ! -f "$xray_config_path" && -f /usr/local/etc/xray/config.json ]]; then
-            xray_config_path=/usr/local/etc/xray/config.json
-        fi
-    fi
     configure_xray_service_identity
     if [[ "$menu_mode" -eq 1 ]]; then show_feature_menu; return $?; fi
     if [[ "$default_route_mode" -eq 1 ]]; then
-        if [[ ! -f "$xray_config_path" && -f /usr/local/etc/xray/config.json ]]; then
-            xray_config_path=/usr/local/etc/xray/config.json
-        fi
         if [[ -f "$xray_config_path" && "$arg_count" -gt 1 && ! ( "$arg_count" -eq 2 && "$dry_run" -eq 1 ) ]]; then
             display_result "已有配置时--default-route须单独使用 / Use --default-route alone for an existing config." >&2
             return 1
@@ -2936,6 +2918,22 @@ main() {
     fi
     check_root || return 1
     init_output_files preserve-shares || return 1
+    if [[ "$remove_mode" -ne 1 && "$realm_only" -ne 1 && "$keepconfig" -ne 1 &&
+          "$add_limiter_mode" -ne 1 && "$change_sni_mode" -ne 1 &&
+          "$xray_config_path" == "$NOKEY_CONFIG_FILE" && ! -f "$xray_config_path" &&
+          ( -e "$legacy_config" || -L "$legacy_config" ) ]]; then
+        if [[ ! -f "$legacy_config" || -L "$legacy_config" ]]; then
+            error "旧版JSON配置不是普通文件 / Legacy JSON config is not a regular file: $legacy_config"
+            return 1
+        fi
+        legacy_backup="$(mktemp /usr/local/etc/nokey-legacy.json.XXXXXX)" || return 1
+        if ! mv -f "$legacy_config" "$legacy_backup" || ! chmod 600 "$legacy_backup"; then
+            error "备份旧版JSON配置失败 / Failed to preserve legacy JSON config."
+            return 1
+        fi
+        info "旧版JSON配置已备份至 $legacy_backup；将按新机器生成YAML配置 / Legacy JSON config saved to $legacy_backup; generating fresh YAML config."
+        log_info "event=legacy_json_archived path=$legacy_backup"
+    fi
     if [[ "$remove_mode" -ne 1 && "$realm_only" -ne 1 &&
           ! ( "$default_route_mode" -eq 1 && -f "$xray_config_path" ) ]]; then
         begin_share_output || return 1
@@ -2958,12 +2956,7 @@ main() {
         return 0
     fi
     if [[ "$addsocks_mode" -eq 1 ]]; then
-        if xray_service_is_active; then xray_active=1; fi
-        if [[ "$xray_active" -eq 1 && ! -f "$xray_config_path" ]]; then
-            error "Xray正在运行但缺少配置文件 / Xray is active but its configuration is missing."
-            return 1
-        fi
-        if [[ "$xray_active" -eq 1 || -f "$xray_config_path" ]]; then
+        if [[ -f "$xray_config_path" ]]; then
             install_dependencies jq || return 1
             patch_existing_xray_config || return 1
             commit_share_output || return 1

@@ -892,36 +892,52 @@ if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
   fi
   rm -rf "$socks_build_dir"
 
-  legacy_build_dir="$(mktemp -d)"
-  if (
-    xray_config_path="$legacy_build_dir/nokey.json"
-    printf '%s\n' '{"old":"config"}' > "$xray_config_path"
-    port=443
-    domain="example.com"
-    reality_dest_port=443
-    uuid="test-uuid"
-    private_key="test-private-key"
-    shortid="abcd1234"
-    mldsa_enabled=0
-    mldsa65Seed=""
-    socks_inbound_json=""
-    ss_inbound_json=""
-    egress_ipv4_available=1
-    egress_ipv6_available=0
-    default_route_choice=4
-    build_xray_config >/dev/null
-    jq -e '.inbounds[0].protocol == "vless"' "$pending_xray_config" >/dev/null
-    jq -e '.old == "config"' "$xray_config_path" >/dev/null
-    rm -f "$pending_xray_config"
-  ); then
-    pass "legacy NoKey JSON path stages JSON without changing active config"
-  else
-    fail "existing nokey.json must stage JSON before validation"
-  fi
-  rm -rf "$legacy_build_dir"
 else
   pass "fresh SOCKS config test skipped (jq or yq unavailable)"
 fi
+
+# --addsocks must use the full installation path when no YAML config exists,
+# even if an older service is still active.
+addsocks_main_dir="$(mktemp -d)"
+if (
+  cd "$addsocks_main_dir" || exit 1
+  parse_args() { addsocks_mode=1; xray_config_path="$addsocks_main_dir/nokey.yaml"; }
+  check_root() { :; }
+  init_output_files() { :; }
+  begin_share_output() { :; }
+  show_banner() { :; }
+  install_dependencies() { :; }
+  require_xray_yaml_tool() { :; }
+  detect_network_interfaces() { :; }
+  detect_egress_network() { :; }
+  install_xray() { printf 'install\n' >> "$addsocks_main_dir/steps"; }
+  configure_xray() { printf 'configure\n' >> "$addsocks_main_dir/steps"; }
+  enable_bbr() { :; }
+  add_alias_if_missing() { :; }
+  output_results() { :; }
+  commit_share_output() { :; }
+  patch_existing_xray_config() { return 1; }
+  menu_mode=0
+  default_route_mode=0
+  remove_mode=0
+  realm_only=0
+  keepconfig=0
+  add_limiter_mode=0
+  change_sni_mode=0
+  dry_run=0
+  egress_ipv4_available=1
+  egress_ipv6_available=0
+  # Exercise the main dispatch on macOS too, where /etc/os-release is absent.
+  : > "$addsocks_main_dir/os-release"
+  eval "$(declare -f main | sed "s@/etc/os-release@$addsocks_main_dir/os-release@g")"
+  main --addsocks >/dev/null
+  [[ "$(cat "$addsocks_main_dir/steps")" == $'install\nconfigure' ]]
+); then
+  pass "--addsocks without YAML runs fresh installation"
+else
+  fail "--addsocks without YAML must install and configure Xray"
+fi
+rm -rf "$addsocks_main_dir"
 
 # A link-local or private IPv6 address must not enable the public listener.
 if (

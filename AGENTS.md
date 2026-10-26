@@ -18,6 +18,7 @@ Fedora, AlmaLinux.
 - `specs/2026-10-25-output-logs-default-route/`: current feature contract and handover.
 - `specs/2026-10-25-xray-yaml-trial/`: experimental YAML config path and verification.
 - `specs/2026-10-26-xray-shadowsocks-ipv6/`: automatic Xray Shadowsocks inbound contract.
+- `specs/2026-10-26-addsocks-yaml-fresh/`: YAML-only `--addsocks` dispatch and legacy JSON archive.
 
 ## Non-negotiables
 

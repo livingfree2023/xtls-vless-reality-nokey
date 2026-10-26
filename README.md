@@ -111,7 +111,8 @@ nokey --addsocks
 `--addsocks`是独立模式，不能和其他参数同时使用：
 
 - 新机器没有Xray配置时，会安装Xray并同时生成SOCKS5入站。
-- 已有`/usr/local/etc/nokey/nokey.yaml`或旧版`nokey.json`时，只向`inbounds`追加SOCKS5配置，保留现有入站和出站；无论服务当前运行还是停止，最后都会重启Nokey服务。脚本会在需要时自动安装并校验 YAML 工具。
+- 已有`/usr/local/etc/nokey/nokey.yaml`时，只向`inbounds`追加SOCKS5配置，保留现有入站和出站；最后会重启Nokey服务。脚本会在需要时自动安装并校验 YAML 工具。
+- 只有旧版`/usr/local/etc/nokey/nokey.json`时，脚本会将其改名备份至`/usr/local/etc/nokey-legacy.json.*`，提示备份位置，然后按新机器安装并生成YAML配置及SOCKS5入站。旧JSON配置不会迁移。
 - SOCKS端口、用户名和密码均自动随机生成。代理地址和下面这种测试命令会输出到终端并写入`nokey.url`：
 
 ```
