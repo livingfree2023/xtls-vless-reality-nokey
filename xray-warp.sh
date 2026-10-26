@@ -199,7 +199,7 @@ fi
 TMP_FILE=$(mktemp "${XRAY_CONFIG}.stage.XXXXXX")
 trap 'rm -f "$TMP_FILE"; [[ "$CONFIG_JSON_SOURCE" == "$XRAY_CONFIG" ]] || rm -f "$CONFIG_JSON_SOURCE"' EXIT
 if [[ "$XRAY_CONFIG" == *.yaml || "$XRAY_CONFIG" == *.yml ]]; then
-  printf '%s\n' "$PATCHED_JSON" | yq -p=json -o=yaml '.' - > "$TMP_FILE"
+  printf '%s\n' "$PATCHED_JSON" | "$xray_yaml_tool_path" -p=json -o=yaml '.' - > "$TMP_FILE"
 else
   printf '%s\n' "$PATCHED_JSON" > "$TMP_FILE"
 fi

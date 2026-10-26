@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.34"
+readonly SCRIPT_VERSION="2026.35"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -1704,7 +1704,7 @@ EOF
     if [[ -n "$socks_inbound_json" ]]; then
         require_xray_yaml_tool || return 1
         local socks_yaml=""
-        socks_yaml="$(printf '%s\n' "$socks_inbound_json" | yq -p=json -o=yaml '.' -)" || return 1
+        socks_yaml="$(printf '%s\n' "$socks_inbound_json" | "$xray_yaml_tool_path" -p=json -o=yaml '.' -)" || return 1
         local socks_entry=""
         socks_entry="$(printf '%s\n' "$socks_yaml" | sed '1s/^/  - /; 2,$s/^/    /')"
         reality_template="${reality_template/outbounds:/$socks_entry
@@ -2624,6 +2624,11 @@ dry_run_preview() {
     info "  ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/xray"
     info "  ${GITHUB_RELEASE_BASE_URL}/geoip.dat -> /usr/local/share/xray/geoip.dat"
     info "  ${GITHUB_RELEASE_BASE_URL}/geosite.dat -> /usr/local/share/xray/geosite.dat"
+    if [[ "$xray_config_path" == *.yaml || "$xray_config_path" == *.yml ]] &&
+       ! xray_yq_is_compatible "$NOKEY_YQ_INSTALL_PATH" &&
+       ! xray_yq_is_compatible "$(command -v yq 2>/dev/null || true)"; then
+        info "  https://github.com/mikefarah/yq/releases/download/${NOKEY_YQ_VERSION}/yq_$(uname -s | tr '[:upper:]' '[:lower:]')_${arch_name} -> ${NOKEY_YQ_INSTALL_PATH} (SHA-256 verified)"
+    fi
 
     info "将设置权限 / Would set permission:"
     info "  chmod 755 /usr/local/bin/xray"
@@ -2872,6 +2877,7 @@ main() {
         return 0
     fi
     if [[ "$keepconfig" -eq 1 ]]; then install_dependencies jq || return 1; else install_dependencies || return 1; fi
+    case "$xray_config_path" in *.yaml|*.yml) require_xray_yaml_tool || return 1 ;; esac
     detect_network_interfaces
     if [[ "$realm_only" -ne 1 ]]; then
         if [[ "$keepconfig" -ne 1 && -z "$egress_ipv4_available" ]]; then

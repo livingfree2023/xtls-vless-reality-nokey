@@ -58,7 +58,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 ```
 
 > **نکته**:
-> نام سرویس به `nokey.service` (در OpenRC: `nokey`) و مسیر فایل تنظیمات جدید به `/usr/local/etc/nokey/nokey.yaml` تغییر یافته است تا از تداخل با سرویس‌های دیگر Xray جلوگیری شود. برای ویرایش YAML با حالت‌های patch، نسخهٔ ۴ ابزار Mike Farah `yq` لازم است؛ نصب‌های JSON قدیمی همان قالب را حفظ می‌کنند.
+> نام سرویس به `nokey.service` (در OpenRC: `nokey`) و مسیر فایل تنظیمات جدید به `/usr/local/etc/nokey/nokey.yaml` تغییر یافته است تا از تداخل با سرویس‌های دیگر Xray جلوگیری شود. اسکریپت ابزار YAML تأییدشده را هنگام نیاز به‌طور خودکار نصب می‌کند؛ نصب‌های JSON قدیمی همان قالب را حفظ می‌کنند.
 
 ## منوی قابلیت‌ها و اسکریپت‌های مستقل
 

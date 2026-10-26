@@ -7,7 +7,8 @@
 - [x] Run shell syntax, ShellCheck and offline suites.
 - [x] Validate generated YAML with Xray 26.10.21 in an isolated temporary directory.
 - [x] Review standalone WARP/SOCKS format paths and update documentation.
+- [x] Auto-install and verify the YAML tool before YAML operations, including fresh installation.
 
 ## Handover 备忘
 
-The branch contains the YAML trial. All offline suites, syntax checks and ShellCheck pass with Mike Farah `yq` v4.54.1. Xray 26.10.21 accepts generated YAML with and without an initial SOCKS inbound. A real Linux/OpenRC service smoke test remains before deployment. YAML comments are lost after a jq-based patch because that path converts through JSON.
+The branch contains the YAML trial. Automatic installation downloads a pinned yq v4.54.1 binary into NoKey's private tool directory, verifies its SHA-256 and version, then atomically publishes it. Offline tests cover success, checksum rejection and stage cleanup; a real macOS download to `/tmp` also passed. Xray 26.10.21 accepts generated YAML with and without an initial SOCKS inbound. A real Linux/OpenRC service smoke test remains before deployment. YAML comments are lost after a jq-based patch because that path converts through JSON.

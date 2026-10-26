@@ -44,12 +44,93 @@ secure_output_file() {
     chmod 600 "$output_path"
 }
 
-# Mike Farah yq v4 is required only when reading or writing Xray YAML.
-require_xray_yaml_tool() {
-    if ! command -v yq >/dev/null 2>&1 || ! yq --version 2>/dev/null | grep -Eq 'version v4\.'; then
-        error "YAML配置需要Mike Farah yq v4 / YAML config requires Mike Farah yq v4: https://github.com/mikefarah/yq#install"
+readonly NOKEY_YQ_VERSION="v4.54.1"
+readonly NOKEY_YQ_INSTALL_PATH="/usr/local/libexec/nokey/yq"
+xray_yaml_tool_path=""
+
+xray_yq_expected_sha256() {
+    case "$(uname -s):$(resolve_arch_name)" in
+        Linux:amd64) printf '%s\n' '8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f' ;;
+        Linux:arm64) printf '%s\n' '189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b' ;;
+        Darwin:amd64) printf '%s\n' '3a812fce205a4d67014fb71b7fa297092210e580df3d8f52dddc2cf3a599c22b' ;;
+        Darwin:arm64) printf '%s\n' 'fee511a181bd8b3e6b7da98842b41973bfac8cd3bcd341ed29a584620b5b2844' ;;
+        *) return 1 ;;
+    esac
+}
+
+xray_sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$file" | awk '{print $NF}'
+    else
         return 1
     fi
+}
+
+xray_yq_is_compatible() {
+    local candidate="$1" version=""
+    [[ -x "$candidate" ]] || return 1
+    version="$("$candidate" --version 2>/dev/null)" || return 1
+    [[ "$version" == *"version ${NOKEY_YQ_VERSION}"* ]]
+}
+
+install_xray_yaml_tool() (
+    local target="${1:-$NOKEY_YQ_INSTALL_PATH}" install_dir="" stage="" platform="" arch=""
+    local expected="" actual="" source_url=""
+    install_dir="$(dirname "$target")"
+    arch="$(resolve_arch_name)" || { error "不支持的yq架构 / Unsupported yq architecture."; return 1; }
+    case "$(uname -s)" in
+        Linux) platform="linux_${arch}" ;;
+        Darwin) platform="darwin_${arch}" ;;
+        *) error "不支持的yq系统 / Unsupported yq operating system."; return 1 ;;
+    esac
+    expected="$(xray_yq_expected_sha256)" || return 1
+    if [[ "$target" == "$NOKEY_YQ_INSTALL_PATH" && "$(id -u)" -ne 0 ]]; then
+        error "安装yq需要root权限 / Installing yq requires root."
+        return 1
+    fi
+    if [[ -L "$target" || -L "$install_dir" ]]; then
+        error "yq安装路径不安全 / Unsafe yq installation path."
+        return 1
+    fi
+    command -v curl >/dev/null 2>&1 || { error "安装yq需要curl / Installing yq requires curl."; return 1; }
+    mkdir -p "$install_dir" || return 1
+    stage="$(mktemp "${target}.stage.XXXXXX")" || return 1
+    trap 'rm -f "$stage"' EXIT
+    source_url="https://github.com/mikefarah/yq/releases/download/${NOKEY_YQ_VERSION}/yq_${platform}"
+    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 90 "$source_url" -o "$stage" 2>>"${LOG_FILE:-/dev/null}"; then
+        error "下载yq失败 / Could not download yq."
+        return 1
+    fi
+    actual="$(xray_sha256_file "$stage")" || { error "无法校验yq的SHA-256 / Cannot verify yq SHA-256."; return 1; }
+    if [[ "$actual" != "$expected" ]]; then
+        error "yq校验和不匹配 / yq checksum mismatch."
+        return 1
+    fi
+    chmod 755 "$stage" || return 1
+    xray_yq_is_compatible "$stage" || { error "yq版本或架构校验失败 / yq version or architecture check failed."; return 1; }
+    mv -f "$stage" "$target" || return 1
+)
+
+require_xray_yaml_tool() {
+    local candidate=""
+    for candidate in "$NOKEY_YQ_INSTALL_PATH" "$(command -v yq 2>/dev/null || true)"; do
+        if [[ -n "$candidate" ]] && xray_yq_is_compatible "$candidate"; then
+            xray_yaml_tool_path="$candidate"
+            return 0
+        fi
+    done
+    task_start "安装已验证的yq / Install verified yq"
+    if ! install_xray_yaml_tool; then
+        task_fail
+        return 1
+    fi
+    xray_yaml_tool_path="$NOKEY_YQ_INSTALL_PATH"
+    task_done
 }
 
 xray_config_to_json() {
@@ -57,7 +138,7 @@ xray_config_to_json() {
     case "$input" in
         *.yaml|*.yml)
             require_xray_yaml_tool || return 1
-            yq -o=json '.' "$input" > "$output" || return 1
+            "$xray_yaml_tool_path" -o=json '.' "$input" > "$output" || return 1
             ;;
         *) jq '.' "$input" > "$output" || return 1 ;;
     esac
@@ -69,7 +150,7 @@ xray_json_to_config() {
     case "$target" in
         *.yaml|*.yml)
             require_xray_yaml_tool || return 1
-            yq -p=json -o=yaml '.' "$input" > "$output" || return 1
+            "$xray_yaml_tool_path" -p=json -o=yaml '.' "$input" > "$output" || return 1
             ;;
         *) cat "$input" > "$output" || return 1 ;;
     esac

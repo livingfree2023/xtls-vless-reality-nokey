@@ -25,6 +25,6 @@ Terminal output uses complete progress/status lines and terminal-only colors. Di
 
 Xray runtime output remains with systemd journal or the existing OpenRC service configuration. Failed restarts collect bounded service diagnostics. Conventional `/usr/local/etc/xray/config.json` maps to `xray.service`/`xray`; the NoKey path maps to `nokey.service`/`nokey`.
 
-The YAML trial renders new NoKey configs at `/usr/local/etc/nokey/nokey.yaml`, which Xray reads directly. Existing JSON installs keep their path and format. jq-based patch modes use a temporary JSON view for YAML inputs, then serialize the final staged result back to YAML before Xray validation and atomic replacement. Mike Farah `yq` v4 is needed for these conversions. A patch rewrites YAML formatting and comments.
+The YAML trial renders new NoKey configs at `/usr/local/etc/nokey/nokey.yaml`, which Xray reads directly. Existing JSON installs keep their path and format. jq-based patch modes use a temporary JSON view for YAML inputs, then serialize the final staged result back to YAML before Xray validation and atomic replacement. A matching Mike Farah `yq` is reused; otherwise the pinned v4.54.1 binary is downloaded to NoKey's private tool directory and verified against a fixed SHA-256 before use. A patch rewrites YAML formatting and comments.
 
 Binary downloads are staged, executable/version checked and atomically renamed. Config rollback restores configuration; it is not a full binary or OS rollback. A new install with no previous config reports that recovery boundary explicitly.

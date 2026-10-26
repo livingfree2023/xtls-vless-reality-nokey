@@ -15,7 +15,7 @@ bash tests/test_default_route.sh
 
 - Unit: argument/family mappings, preferred DNS order, existing configuration preservation and legacy Freedom resolution normalization.
 - Module: secure/redacted logs, legacy history migration, nested progress output, command failure and signal cleanup, removed flag handling, validation rejection and failed-restart rollback.
-- YAML trial: with Mike Farah `yq` v4 installed, the NoKey suite verifies a fresh YAML template and a YAML patch round trip. It skips those two cases if `yq` is absent.
+- YAML trial: the NoKey suite verifies a fresh YAML template and a YAML patch round trip when `yq` is available. The feature suite tests automatic binary installation, checksum rejection and temporary-file cleanup without network or system writes.
 - Terminal: local Python 3 PTY probes verify nested colors, cancellation and unavailable choices; these probes explicitly skip when Python is absent.
 - Integration: real Xray parses full generated REALITY templates with disposable keys, then serves a localhost-only SOCKS proxy that makes real HTTPS requests. Both preferences are tested with dual-stack, A-only and AAAA-only targets. Controlled unreachable addresses test actual TCP failover. Output reports only address family, never the actual public address.
 

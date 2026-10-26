@@ -58,7 +58,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 ```
 
 > **Note**:
-> 1. The service is managed as `nokey.service` (OpenRC: `nokey`) with new configurations stored at `/usr/local/etc/nokey/nokey.yaml`, avoiding collisions with existing official Xray services or control panels (e.g., 3x-ui). Editing YAML through patch modes requires Mike Farah `yq` v4; existing JSON installs retain their format.
+> 1. The service is managed as `nokey.service` (OpenRC: `nokey`) with new configurations stored at `/usr/local/etc/nokey/nokey.yaml`, avoiding collisions with existing official Xray services or control panels (e.g., 3x-ui). The installer automatically supplies the verified YAML tool when needed; existing JSON installs retain their format.
 > 2. Installing to `/usr/local/bin/nokey` as shown above ensures full flag compatibility across all shells (Bash, Zsh, Ash/Sh, Fish).
 
 ## Feature menu and standalone scripts
