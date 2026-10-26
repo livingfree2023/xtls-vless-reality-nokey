@@ -15,6 +15,7 @@ Fedora, AlmaLinux.
 - `docs/ARCHITECTURE.md`: configuration flow, egress/DNS and diagnostic boundaries.
 - `docs/TESTING.md`: unit, module, terminal and opt-in real network verification.
 - `specs/2026-10-25-output-logs-default-route/`: current feature contract and handover.
+- `specs/2026-10-25-xray-yaml-trial/`: experimental YAML config path and verification.
 
 ## Non-negotiables
 

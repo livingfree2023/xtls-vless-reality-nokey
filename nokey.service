@@ -9,7 +9,7 @@ ${temp_CapabilityBoundingSet}
 ${temp_AmbientCapabilities}
 ${temp_NoNewPrivileges}
 Environment=XRAY_LOCATION_ASSET=/usr/local/share/xray/
-ExecStart=/usr/local/bin/xray run -c /usr/local/etc/nokey/nokey.json
+ExecStart=/usr/local/bin/xray run -c /usr/local/etc/nokey/nokey.yaml
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure

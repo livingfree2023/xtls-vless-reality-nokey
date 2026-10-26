@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034,SC2154,SC2329
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,5 +76,21 @@ touch "$fixture_dir/custom.crt" "$fixture_dir/custom.key"
 )
 
 [[ "$(bash "$REPO_ROOT/xray-socks.sh" --help)" == *"Usage: xray-socks.sh"* ]]
+if command -v yq >/dev/null 2>&1; then
+    (
+        GITHUB_CMD=""
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/xray-socks.sh"
+        xray_config_path="$fixture_dir/xray.yaml"
+        printf '%s\n' 'inbounds: []' 'outbounds: []' > "$xray_config_path"
+        remove_mode=0
+        initialize_ip_from_netstack() { :; }
+        add_socks_to_existing_config() { jq '.inbounds += [{"tag":"nokey-socks-1080","protocol":"socks","port":1080}]' "$patch_jq_source" > "$patch_tmp_out"; }
+        restart_xray_service() { :; }
+        output_socks_proxy() { :; }
+        apply_socks_change
+        yq -e '.inbounds[0].protocol == "socks"' "$xray_config_path" >/dev/null
+    )
+fi
 
 echo "All feature entrypoint tests passed."

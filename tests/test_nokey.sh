@@ -164,7 +164,7 @@ echo "$dry_run_out" | grep -Eq 'releases/latest/download/xray_(amd64|arm64) -> /
 [[ "$dry_run_out" == *"releases/latest/download/geoip.dat -> /usr/local/share/xray/geoip.dat"* ]] || fail "dry-run should include geoip.dat download path"
 [[ "$dry_run_out" == *"releases/latest/download/geosite.dat -> /usr/local/share/xray/geosite.dat"* ]] || fail "dry-run should include geosite.dat download path"
 [[ "$dry_run_out" == *"/etc/init.d/nokey"* ]] || fail "dry-run alpine should include OpenRC path"
-[[ "$dry_run_out" == *"/usr/local/etc/nokey/nokey.json"* ]] || fail "dry-run should include nokey.json config path"
+[[ "$dry_run_out" == *"/usr/local/etc/nokey/nokey.yaml"* ]] || fail "dry-run should include nokey.yaml config path"
 ID="debian"
 ID_LIKE="debian"
 dry_run_out="$(dry_run_preview 2>&1 || true)"
@@ -825,10 +825,10 @@ else
 fi
 
 # Test 41: a fresh Xray config includes the generated SOCKS inbound
-if command -v jq >/dev/null 2>&1; then
+if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
   socks_build_dir="$(mktemp -d)"
   if (
-    xray_config_path="$socks_build_dir/nokey.json"
+    xray_config_path="$socks_build_dir/nokey.yaml"
     port=443
     domain="example.com"
     reality_dest_port=443
@@ -845,25 +845,22 @@ if command -v jq >/dev/null 2>&1; then
     default_route_choice=4
     build_xray_config >/dev/null
     [[ ! -e "$xray_config_path" ]] || exit 1
-    xray_config_path="$pending_xray_config"
-    patch_jq_source=""
-    patch_cleanup=""
-    resolve_jq_config_source
-    jq -e '.inbounds | length == 2' "$patch_jq_source" >/dev/null
-    [[ "$(jq -r '.inbounds[0].protocol' "$patch_jq_source")" == "vless" ]]
-    [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$patch_jq_source")" == "0.0.0" ]]
-    [[ "$(jq -r '.inbounds[1].protocol' "$patch_jq_source")" == "socks" ]]
-    [[ "$(jq -r '.log | has("access")' "$patch_jq_source")" == "false" ]]
-    [[ "$(jq -r '.log | has("error")' "$patch_jq_source")" == "false" ]]
-    rm -f "$patch_cleanup"
+    yq -o=json '.' "$pending_xray_config" > "$socks_build_dir/output.json"
+    jq -e '.inbounds | length == 2' "$socks_build_dir/output.json" >/dev/null
+    [[ "$(jq -r '.inbounds[0].protocol' "$socks_build_dir/output.json")" == "vless" ]]
+    [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$socks_build_dir/output.json")" == "0.0.0" ]]
+    [[ "$(jq -r '.inbounds[1].protocol' "$socks_build_dir/output.json")" == "socks" ]]
+    [[ "$(jq -r '.log | has("access")' "$socks_build_dir/output.json")" == "false" ]]
+    [[ "$(jq -r '.log | has("error")' "$socks_build_dir/output.json")" == "false" ]]
+    rm -f "$pending_xray_config"
   ); then
     pass "fresh Xray config includes SOCKS inbound"
   else
-    fail "build_xray_config should emit valid JSON with VLESS and SOCKS inbounds"
+    fail "build_xray_config should emit valid YAML with VLESS and SOCKS inbounds"
   fi
   rm -rf "$socks_build_dir"
 else
-  pass "fresh SOCKS config test skipped (jq unavailable)"
+  pass "fresh SOCKS config test skipped (jq or yq unavailable)"
 fi
 
 # Test 41b: existing file logs are migrated to systemd journal output
@@ -887,6 +884,30 @@ if command -v jq >/dev/null 2>&1; then
   rm -rf "$journald_config_dir"
 else
   pass "journald migration test skipped (jq unavailable)"
+fi
+
+# YAML remains the runtime format after a jq-based patch and Xray validation.
+if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
+  yaml_patch_dir="$(mktemp -d)"
+  if (
+    xray_config_path="$yaml_patch_dir/nokey.yaml"
+    printf '%s\n' 'log:' '  loglevel: error' 'inbounds: []' > "$xray_config_path"
+    resolve_jq_config_source
+    jq '.log.loglevel = "warning"' "$patch_jq_source" > "$yaml_patch_dir/staged.json"
+    xray() { [[ "$*" == *"-format yaml"* ]]; }
+    restart_xray_service() { :; }
+    commit_xray_config "$yaml_patch_dir/staged.json" >/dev/null
+    [[ "$(yq -r '.log.loglevel' "$xray_config_path")" == "warning" ]]
+    [[ "$(head -n 1 "$xray_config_path")" == "log:" ]]
+    rm -f "$patch_cleanup"
+  ); then
+    pass "YAML patch validates and remains YAML"
+  else
+    fail "YAML patch should preserve runtime format"
+  fi
+  rm -rf "$yaml_patch_dir"
+else
+  pass "YAML patch test skipped (jq or yq unavailable)"
 fi
 
 # Removed Sing-box flags must fail explicitly before touching output files.

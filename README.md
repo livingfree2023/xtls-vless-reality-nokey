@@ -48,7 +48,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 ```
 
 > **说明**：
-> 1. 服务名称已独立为 `nokey.service`（OpenRC: `nokey`），配置文件存放于 `/usr/local/etc/nokey/nokey.json`，不会与系统上已有的官方 Xray 或面板（如 3x-ui）产生服务名与配置文件冲突。
+> 1. 服务名称已独立为 `nokey.service`（OpenRC: `nokey`），新安装的配置文件存放于 `/usr/local/etc/nokey/nokey.yaml`，不会与系统上已有的官方 Xray 或面板（如 3x-ui）产生服务名与配置文件冲突。
 > 2. 推荐通过上述命令安装至 `/usr/local/bin/nokey`，可在所有 Shell（Bash、Zsh、Ash/Sh、Fish）中随时执行 `nokey --menu` 等任意参数命令。
 
 ### 功能菜单和独立脚本
@@ -109,7 +109,7 @@ nokey --addsocks
 `--addsocks`是独立模式，不能和其他参数同时使用：
 
 - 新机器没有Xray配置时，会安装Xray并同时生成SOCKS5入站。
-- 已有`/usr/local/etc/nokey/nokey.json`时，只向`inbounds`追加SOCKS5配置，保留现有入站和出站；无论服务当前运行还是停止，最后都会重启Nokey服务。
+- 已有`/usr/local/etc/nokey/nokey.yaml`或旧版`nokey.json`时，只向`inbounds`追加SOCKS5配置，保留现有入站和出站；无论服务当前运行还是停止，最后都会重启Nokey服务。编辑 YAML 配置需安装 Mike Farah `yq` v4。
 - SOCKS端口、用户名和密码均自动随机生成。代理地址和下面这种测试命令会输出到终端并写入`nokey.url`：
 
 ```

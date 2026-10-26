@@ -20,12 +20,14 @@ fi
 
 if [[ -n "${XRAY_CONFIG:-}" ]]; then
     xray_config_path="$XRAY_CONFIG"
+elif [[ -f "/usr/local/etc/nokey/nokey.yaml" ]]; then
+    xray_config_path="/usr/local/etc/nokey/nokey.yaml"
 elif [[ -f "/usr/local/etc/nokey/nokey.json" ]]; then
     xray_config_path="/usr/local/etc/nokey/nokey.json"
 elif [[ -f "/usr/local/etc/xray/config.json" ]]; then
     xray_config_path="/usr/local/etc/xray/config.json"
 else
-    xray_config_path="/usr/local/etc/nokey/nokey.json"
+    xray_config_path="/usr/local/etc/nokey/nokey.yaml"
 fi
 netstack=""
 IPv4=""
@@ -63,6 +65,14 @@ resolve_jq_config_source() {
         error "缺少配置文件: $config_path，补丁模式需要现有配置文件 / Missing config: $config_path. Patch modes require an existing config file."
         return 1
     fi
+    case "$config_path" in
+        *.yaml|*.yml)
+            patch_cleanup="$(mktemp /tmp/nokey-config-json.XXXXXX)" || return 1
+            xray_config_to_json "$config_path" "$patch_cleanup" || return 1
+            patch_jq_source="$patch_cleanup"
+            return 0
+            ;;
+    esac
     if jq empty "$config_path" >/dev/null 2>&1; then
         patch_jq_source="$config_path"
         return 0
@@ -281,7 +291,15 @@ patch_existing_xray_config() {
         add_socks_to_existing_config || { task_fail; rm -f "$patch_tmp_out" "$patch_cleanup"; exit 1; }
     fi
 
-    if ! mv "$patch_tmp_out" "$xray_config_path"; then
+    local config_stage="$patch_tmp_out"
+    case "$xray_config_path" in
+        *.yaml|*.yml)
+            config_stage="$(mktemp "${xray_config_path}.stage.XXXXXX")" || return 1
+            xray_json_to_config "$patch_tmp_out" "$config_stage" "$xray_config_path" || return 1
+            rm -f "$patch_tmp_out"
+            ;;
+    esac
+    if ! mv "$config_stage" "$xray_config_path"; then
         task_fail
         error "写入配置文件失败: $xray_config_path / Failed to write config to $xray_config_path."
         rm -f "$patch_cleanup"
@@ -328,7 +346,15 @@ apply_socks_change() {
         add_socks_to_existing_config || return 1
     fi
     jq empty "$patch_tmp_out" >/dev/null 2>&1 || return 1
-    mv "$patch_tmp_out" "$xray_config_path" || return 1
+    local config_stage="$patch_tmp_out"
+    case "$xray_config_path" in
+        *.yaml|*.yml)
+            config_stage="$(mktemp "${xray_config_path}.stage.XXXXXX")" || return 1
+            xray_json_to_config "$patch_tmp_out" "$config_stage" "$xray_config_path" || return 1
+            rm -f "$patch_tmp_out"
+            ;;
+    esac
+    mv "$config_stage" "$xray_config_path" || return 1
     [[ -n "$patch_cleanup" ]] && rm -f "$patch_cleanup"
     restart_xray_service
     [[ "$remove_mode" -eq 1 ]] || output_socks_proxy

@@ -44,6 +44,37 @@ secure_output_file() {
     chmod 600 "$output_path"
 }
 
+# Mike Farah yq v4 is required only when reading or writing Xray YAML.
+require_xray_yaml_tool() {
+    if ! command -v yq >/dev/null 2>&1 || ! yq --version 2>/dev/null | grep -Eq 'version v4\.'; then
+        error "YAML配置需要Mike Farah yq v4 / YAML config requires Mike Farah yq v4: https://github.com/mikefarah/yq#install"
+        return 1
+    fi
+}
+
+xray_config_to_json() {
+    local input="$1" output="$2"
+    case "$input" in
+        *.yaml|*.yml)
+            require_xray_yaml_tool || return 1
+            yq -o=json '.' "$input" > "$output" || return 1
+            ;;
+        *) jq '.' "$input" > "$output" || return 1 ;;
+    esac
+    jq -e 'type == "object"' "$output" >/dev/null
+}
+
+xray_json_to_config() {
+    local input="$1" output="$2" target="$3"
+    case "$target" in
+        *.yaml|*.yml)
+            require_xray_yaml_tool || return 1
+            yq -p=json -o=yaml '.' "$input" > "$output" || return 1
+            ;;
+        *) cat "$input" > "$output" || return 1 ;;
+    esac
+}
+
 # Preserve useful legacy diagnostics while removing credentials written by older
 # installers. Copy metadata first, then atomically replace the same-directory
 # file; any failure leaves the restricted original untouched.
