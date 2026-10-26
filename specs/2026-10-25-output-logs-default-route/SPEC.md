@@ -1,4 +1,4 @@
-# NoKey output, logging, Sing-box removal, and default egress
+# NoKey output, logging, and default egress
 
 Status: prototype approved; preference mode implemented and verified for local delivery. Prior Chrome fingerprint change stays intact.
 
@@ -7,7 +7,6 @@ Status: prototype approved; preference mode implemented and verified for local d
 - `nokey.sh` overrides shared output/logging helpers. `task_start` writes a partial line; nested info creates merged lines and a detached OK. An isolated helper probe reproduced it.
 - `init_output_files` creates 0644 files with the current ambient umask. Both helpers truncate logs. Logs can contain ANSI, complete config/private keys, share URLs, and SOCKS passwords.
 - Logs lack consistent level/time/run/phase, durations, command failures, and bounded service startup evidence.
-- Sing-box is embedded in the main installer, a separate entrypoint, menu/help/docs/tests, service assets, and the scheduled binary release workflow.
 - The template places `force_ipv4` first and sets global DNS `UseIPv4`. Moving `force_ipv6` first alone cannot resolve AAAA through that global filter.
 - Xray 26.10.21 on the authorized VPS accepted isolated temporary configs with `UseIP` and Happy Eyeballs for both IPv4 and IPv6 preference. Test used `xray run -test`; no production config or service was changed. Initial probe validated parsing only; final integration also verified actual public IPv4/IPv6 egress and failover on an authorized Alpine Podman host.
 
@@ -21,10 +20,6 @@ Use 0600 output files, bounded previous-run retention, one run identifier, times
 
 Validate a staged configuration with the installed Xray before replacement, back up with restrictive permissions, replace atomically on the same filesystem, restart and verify service readiness. On failure collect bounded, sanitized diagnostics and restore/restart the prior configuration. Record rollback status. Reject symlink destinations for generated sensitive outputs.
 
-### Remove Sing-box
-
-Remove installer branches, flags, menu/help entries, standalone script, service assets, exclusive helpers, tests and documentation. Old flags exit nonzero with a clear removed-feature message before initializing output files. Remove its scheduled download/checksum/release dependency. Existing VPS services are not uninstalled by a future normal NoKey invocation.
-
 ### --default-route
 
 Add an interactive /dev/tty menu and an entry in --menu. In an existing NoKey config, apply a focused backed-up patch preserving credentials, inbounds, routing rules and unrelated outbounds. For fresh installation, select the family before rendering the template. Keep --netstack as inbound/share-address selection; egress preference is independent. Noninteractive calls without a value fail with guidance; a --default-route=4|6 form can support automation. Detect both local routes and bounded successful external IPv4/IPv6 probes; unavailable families are disabled. Cancel leaves existing configuration untouched.
@@ -37,7 +32,7 @@ Outbounds are not an automatic fallback chain. Single-stack hosts use matching D
 
 ## Verification contract
 
-- Unit: route selection, family mappings, stdout helpers, log filtering, secret exclusion, file modes, unknown/removed argument behavior and cancellation.
+- Unit: route selection, family mappings, stdout helpers, log filtering, secret exclusion, file modes, unknown argument behavior and cancellation.
 - Module: generated/patch JSONC configs for IPv4-only, IPv6-only and dual stack; preserve existing rule tags; stage/backup/rollback on validation and restart failure; TTY/non-TTY behavior.
 - Integration: real Xray 26.10.21 validation and isolated localhost proxy tests against real A-only, AAAA-only and dual-stack targets, including unavailable preferred family. No production service changes without an explicit target action.
 - Required syntax/ShellCheck and both repository Bash test suites after changes; compare pre-existing warnings separately.

@@ -207,7 +207,7 @@ init_output_files() {
 sanitize_log_stream() {
     local log_line="" secret_name="" secret_value="" secret_part=""
     while IFS= read -r log_line || [[ -n "$log_line" ]]; do
-        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password; do
+        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password ss_password; do
             secret_value="${!secret_name:-}"
             while [[ -n "$secret_value" ]]; do
                 secret_part="${secret_value%%$'\n'*}"

@@ -202,7 +202,7 @@ prepare_socks_inbound() {
     fi
     socks_port="$random_unused_port"
 
-    # Xray names password-auth entries "users" (Sing-box uses different schema names).
+    # Xray password-auth entries use the users field.
     socks_inbound_json=$(cat <<-EOF
           {
             "tag": "nokey-socks-${socks_port}",

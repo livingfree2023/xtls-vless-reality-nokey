@@ -65,6 +65,7 @@ nokey --menu
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/realm.sh) --remote=1.2.3.4:443
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-socks.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-shadowsocks.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/xray-warp.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/bbr.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/acme-cert.sh) --domain=example.com
@@ -74,6 +75,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 ```
 
 这些脚本会自动加载`nokey-common.sh`。需要JSON配置处理的功能会先检查并安装`jq`。
+
+菜单选项 9 在现有 Xray 配置中添加 Shadowsocks 2022 入站，使用 `2022-blake3-aes-128-gcm`，仅监听本机全局 IPv6 地址。可用 `--listen=IPv6地址`、`--port=端口` 指定地址和端口。配置经 Xray 校验并成功重启后输出 `ss://` 链接。
 
 菜单中的acme.sh功能使用Cloudflare DNS验证（输入API token时）或80端口HTTP验证，并把证书安装到`/etc/hysteria/`。Hysteria2默认选择10000以上的随机空闲端口（可用`--port`指定），如果提供Cloudflare token，会优先使用内置ACME DNS验证；否则检测该目录和`~/.acme.sh/`中的证书，找不到时提示输入证书和私钥路径。服务启动成功后，`nokey.url`会保存链接和Mihomo/Clash YAML配置，并输出systemd/OpenRC重启和状态检查命令。
 
@@ -98,8 +101,6 @@ nokey --default-route=6
 ```
 
 `--netstack=4|6` 选择客户端连接使用的服务器地址；`--default-route` 选择 Xray 访问目标网站时的出口偏好。双栈 DNS 保留 A 和 AAAA 查询。已有配置会先备份并校验，再应用选择。
-
-Sing-box 安装功能已移除，旧参数 `--singbox` 和 `--singbox-only` 会在更改系统前报错。更新脚本不会自动卸载服务器上已安装的 Sing-box。
 
 ### 为Xray添加SOCKS5入站
 ```

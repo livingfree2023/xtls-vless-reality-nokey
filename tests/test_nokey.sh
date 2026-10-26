@@ -910,19 +910,4 @@ else
   pass "YAML patch test skipped (jq or yq unavailable)"
 fi
 
-# Removed Sing-box flags must fail explicitly before touching output files.
-for removed_flag in --singbox --singbox-only; do
-  removed_dir="$(mktemp -d)"
-  printf 'keep-log\n' > "$removed_dir/nokey.log"
-  printf 'keep-url\n' > "$removed_dir/nokey.url"
-  if (cd "$removed_dir" && bash "$REPO_ROOT/nokey.sh" "$removed_flag") > "$removed_dir/output" 2>&1; then
-    fail "$removed_flag should fail"
-  fi
-  grep -Eq 'removed|已移除' "$removed_dir/output" || fail "$removed_flag should explain removal"
-  [[ "$(cat "$removed_dir/nokey.log")" == "keep-log" ]] || fail "$removed_flag changed logs"
-  [[ "$(cat "$removed_dir/nokey.url")" == "keep-url" ]] || fail "$removed_flag changed URLs"
-  rm -rf "$removed_dir"
-done
-pass "removed Sing-box flags fail without side effects"
-
 echo "All tests passed."

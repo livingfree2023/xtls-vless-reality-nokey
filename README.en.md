@@ -105,8 +105,6 @@ nokey --default-route=6
 
 `--netstack=4|6` chooses the server address clients connect to. `--default-route` chooses Xray's preferred address family when connecting to destination websites. Dual-stack DNS retains both A and AAAA queries. Existing configuration is backed up and validated before the selection is applied.
 
-Sing-box installation has been removed. The old `--singbox` and `--singbox-only` options fail before making system changes. Updating the script does not automatically uninstall an existing Sing-box service.
-
 ---
 
 # 🔍 Dry-run (preview without changing system)
