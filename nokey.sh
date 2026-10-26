@@ -68,23 +68,6 @@ arg_count=0
 xray_config_path="$NOKEY_CONFIG_FILE"
 patch_jq_source=""
 patch_cleanup=""
-share_output_file=""
-
-begin_share_output() {
-    share_output_file="$(mktemp "${URL_FILE}.stage.XXXXXX")" || return 1
-    chmod 600 "$share_output_file" || return 1
-    trap 'rm -f "$share_output_file"' EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-}
-
-commit_share_output() {
-    [[ -n "$share_output_file" && -s "$share_output_file" ]] || return 1
-    mv -f "$share_output_file" "$URL_FILE" || return 1
-    share_output_file=""
-    trap - EXIT HUP INT TERM
-}
 patch_tmp_out=""
 socks_port=""
 socks_username=""
@@ -2272,8 +2255,8 @@ output_socks_proxy() {
     display_result "$proxy_url"
     info "SOCKS5测试命令 / SOCKS5 test command:"
     display_result "$curl_command"
-    echo "$proxy_url" >> "${share_output_file:-$URL_FILE}"
-    echo "$curl_command" >> "${share_output_file:-$URL_FILE}"
+    echo "$proxy_url" >> "$URL_FILE"
+    echo "$curl_command" >> "$URL_FILE"
 }
 
 patch_existing_xray_config() {
@@ -2708,13 +2691,13 @@ generate_share_links() {
     if [[ $mldsa_enabled == 1 ]]; then
       vless_reality_mldsa_url="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}&pqv=${mldsa65Verify}#${current_hostname}"
       display_result "${vless_reality_mldsa_url}"
-      echo "$vless_reality_mldsa_url" >> "${share_output_file:-$URL_FILE}"
+      echo "$vless_reality_mldsa_url" >> "$URL_FILE"
       info "不含mldsa / Without mldsa:"
       display_result "${vless_reality_url_short}"
-      echo "$vless_reality_url_short" >> "${share_output_file:-$URL_FILE}"
+      echo "$vless_reality_url_short" >> "$URL_FILE"
     else
       display_result "${vless_reality_url_short}"
-      echo "$vless_reality_url_short" >> "${share_output_file:-$URL_FILE}"
+      echo "$vless_reality_url_short" >> "$URL_FILE"
     fi
 }
 
@@ -2746,7 +2729,7 @@ EOF
 )
     info "Clash.meta 配置 / Clash.meta config:"
     display_result "${clash_meta_config}"
-    echo "$clash_meta_config" >> "${share_output_file:-$URL_FILE}"
+    echo "$clash_meta_config" >> "$URL_FILE"
 }
 
 # Emit an extra IPv6 share URL + clash entry when the box is dual-stack but the
@@ -2758,7 +2741,7 @@ generate_ipv6_variants() {
     ipv6_link="vless://${uuid}@[${IPv6}]:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}-ipv6"
     info "分享链接 (IPv6) / Share Link (IPv6):"
     display_result "${ipv6_link}"
-    echo "$ipv6_link" >> "${share_output_file:-$URL_FILE}"
+    echo "$ipv6_link" >> "$URL_FILE"
 
     local ipv6_clash
     ipv6_clash=$(cat <<-EOF
@@ -2780,7 +2763,7 @@ EOF
 )
     info "Clash.meta 配置 (IPv6) / Clash.meta config (IPv6):"
     display_result "${ipv6_clash}"
-    echo "$ipv6_clash" >> "${share_output_file:-$URL_FILE}"
+    echo "$ipv6_clash" >> "$URL_FILE"
 }
 
 output_results() {
@@ -2850,10 +2833,10 @@ main() {
         return 0
     fi
     check_root || return 1
-    init_output_files preserve-shares || return 1
-    if [[ "$remove_mode" -ne 1 && "$realm_only" -ne 1 &&
-          ! ( "$default_route_mode" -eq 1 && -f "$xray_config_path" ) ]]; then
-        begin_share_output || return 1
+    if [[ "$default_route_mode" -eq 1 && -f "$xray_config_path" ]]; then
+        init_output_files preserve-shares || return 1
+    else
+        init_output_files || return 1
     fi
     show_banner
     log_info "event=run_version version=$SCRIPT_VERSION"
@@ -2868,7 +2851,6 @@ main() {
     if [[ "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 ]]; then
         install_dependencies jq || return 1
         patch_existing_xray_config || return 1
-        commit_share_output || return 1
         info "补丁完成 / Patch complete."
         return 0
     fi
@@ -2881,7 +2863,6 @@ main() {
         if [[ "$xray_active" -eq 1 || -f "$xray_config_path" ]]; then
             install_dependencies jq || return 1
             patch_existing_xray_config || return 1
-            commit_share_output || return 1
             info "SOCKS5入站添加完成 / SOCKS5 inbound added."
             return 0
         fi
@@ -2913,7 +2894,6 @@ main() {
         restart_realm_service || return 1
     fi
     output_results || return 1
-    if [[ -n "$share_output_file" ]]; then commit_share_output || return 1; fi
     info "总用时 / Elapsed: ${SECONDS}s"
     log_info "event=run_complete duration_s=$SECONDS"
 }
