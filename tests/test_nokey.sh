@@ -891,6 +891,34 @@ if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
     fail "build_xray_config should emit valid YAML with VLESS and SOCKS inbounds"
   fi
   rm -rf "$socks_build_dir"
+
+  legacy_build_dir="$(mktemp -d)"
+  if (
+    xray_config_path="$legacy_build_dir/nokey.json"
+    printf '%s\n' '{"old":"config"}' > "$xray_config_path"
+    port=443
+    domain="example.com"
+    reality_dest_port=443
+    uuid="test-uuid"
+    private_key="test-private-key"
+    shortid="abcd1234"
+    mldsa_enabled=0
+    mldsa65Seed=""
+    socks_inbound_json=""
+    ss_inbound_json=""
+    egress_ipv4_available=1
+    egress_ipv6_available=0
+    default_route_choice=4
+    build_xray_config >/dev/null
+    jq -e '.inbounds[0].protocol == "vless"' "$pending_xray_config" >/dev/null
+    jq -e '.old == "config"' "$xray_config_path" >/dev/null
+    rm -f "$pending_xray_config"
+  ); then
+    pass "legacy NoKey JSON path stages JSON without changing active config"
+  else
+    fail "existing nokey.json must stage JSON before validation"
+  fi
+  rm -rf "$legacy_build_dir"
 else
   pass "fresh SOCKS config test skipped (jq or yq unavailable)"
 fi

@@ -86,6 +86,8 @@ Each entrypoint loads `nokey-common.sh`; JSON-based features install `jq` throug
 
 NoKey installs its verified `yq` at `/usr/local/libexec/nokey/yq` and adds that directory to existing `~/.bashrc` and `~/.zshrc` files. Open a new shell, or source the relevant rc file, to use `yq` as a command.
 
+Existing installations keep running after the code is updated. Running with `--keepconfig` preserves an existing JSON configuration and credentials. A normal reinstall on an existing NoKey JSON installation keeps its JSON file path and format, but generates new credentials; update clients with the new share links after reinstalling.
+
 The acme.sh menu entry uses Cloudflare DNS validation when a token is entered, otherwise it uses standalone HTTP-01 on port 80. Hysteria2 chooses a random free port above 10000 by default (`--port` overrides it). Providing `HYSTERIA_CF_TOKEN` or entering a token uses Hysteria's built-in ACME DNS challenge; otherwise it detects certificates under `/etc/hysteria/` and `~/.acme.sh/`, then asks for certificate and key paths if needed. After the service is active, `nokey.url` contains a `hysteria2://` share URL and a Mihomo/Clash YAML proxy entry, followed by systemd/OpenRC restart and status commands.
 
 ---

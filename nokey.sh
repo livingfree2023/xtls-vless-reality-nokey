@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.39"
+readonly SCRIPT_VERSION="2026.40"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -1779,7 +1779,18 @@ outbounds:}"
     fi
 
     pending_xray_config="$(mktemp "${config_path}.stage.XXXXXX")" || return 1
-    if ! printf '%s\n' "$reality_template" > "$pending_xray_config"; then
+    local staged_ok=0
+    case "$config_path" in
+        *.yaml|*.yml)
+            printf '%s\n' "$reality_template" > "$pending_xray_config" && staged_ok=1
+            ;;
+        *)
+            if require_xray_yaml_tool && printf '%s\n' "$reality_template" | "$xray_yaml_tool_path" -o=json '.' - > "$pending_xray_config"; then
+                staged_ok=1
+            fi
+            ;;
+    esac
+    if [[ "$staged_ok" -ne 1 ]]; then
         rm -f "$pending_xray_config"
         pending_xray_config=""
         task_fail
