@@ -7,7 +7,7 @@ pidfile="/run/${RC_SVCNAME}.pid"
 extra_commands="checkconfig"
 
 env=${env:-"XRAY_LOCATION_ASSET=/usr/local/share/xray/"} # See: https://github.com/XTLS/Xray-core/blob/main/common/platform/platform.go
-config=${config:-"/usr/local/etc/nokey/nokey.json"}
+config=${config:-"/usr/local/etc/nokey/nokey.yaml"}
 command="/usr/local/bin/xray"
 command_args="run -c $config"
 command_background="yes"

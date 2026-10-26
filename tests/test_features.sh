@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
+# shellcheck disable=SC2030,SC2031,SC2034,SC2154,SC2329
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +26,10 @@ acme_output="$(bash "$REPO_ROOT/acme-cert.sh" --domain=example.com --dry-run)"
 hysteria_output="$(bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --dry-run)"
 [[ "$hysteria_output" == *"Hysteria2 dry-run"* ]]
 [[ "$hysteria_output" == *"Port:"* ]]
+if grep -Eq 'run_feature_script xray-shadowsocks.sh|9\) Add IPv6 Shadowsocks' "$REPO_ROOT/nokey.sh"; then
+    echo "FAIL: Shadowsocks must not have a separate menu action"
+    exit 1
+fi
 hysteria_acme_output="$(HYSTERIA_CF_TOKEN=test-token bash "$REPO_ROOT/hysteria2.sh" --domain=example.com --dry-run)"
 [[ "$hysteria_acme_output" == *"built-in ACME DNS-01"* ]]
 [[ "$(bash "$REPO_ROOT/hysteria2.sh" --help)" == *"--cert-path=PATH"* ]]
@@ -45,6 +49,45 @@ awk '/configure_openrc_crash_restart/{found=1} found && /chmod 755/{ok=1} END{ex
 
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
+(
+    # Exercise the pinned installer without network access or system writes.
+    GITHUB_CMD=""
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/nokey-common.sh"
+    yq_fixture="$fixture_dir/fake-yq"
+    yq_target="$fixture_dir/installed-yq"
+    printf '#!/bin/sh\nprintf "yq version %s\\n"\n' "$NOKEY_YQ_VERSION" > "$yq_fixture"
+    chmod 755 "$yq_fixture"
+    fixture_sha="$(xray_sha256_file "$yq_fixture")"
+    xray_yq_expected_sha256() { printf '%s\n' "$fixture_sha"; }
+    curl() {
+        local arg="" output="" next=0
+        for arg in "$@"; do
+            if [[ "$next" -eq 1 ]]; then output="$arg"; break; fi
+            [[ "$arg" == -o ]] && next=1
+        done
+        [[ -n "$output" ]] || return 1
+        cp "$yq_fixture" "$output"
+    }
+    install_xray_yaml_tool "$yq_target"
+    xray_yq_is_compatible "$yq_target"
+    mkdir -p "$fixture_dir/home"
+    : > "$fixture_dir/home/.bashrc"
+    : > "$fixture_dir/home/.zshrc"
+    HOME="$fixture_dir/home" configure_yq_shell_path "$yq_target"
+    HOME="$fixture_dir/home" configure_yq_shell_path "$yq_target"
+    [[ "$(grep -c 'export PATH=' "$fixture_dir/home/.bashrc")" -eq 1 ]]
+    [[ "$(grep -c 'export PATH=' "$fixture_dir/home/.zshrc")" -eq 1 ]]
+    [[ "$PATH" == "$fixture_dir:"* ]]
+    bash -n "$fixture_dir/home/.bashrc" "$fixture_dir/home/.zshrc"
+    if command -v zsh >/dev/null 2>&1; then zsh -n "$fixture_dir/home/.zshrc"; fi
+    [[ ! -e "$fixture_dir/home/.profile" ]]
+    rm -f "$yq_target"
+    xray_yq_expected_sha256() { printf '%064d\n' 0; }
+    if install_xray_yaml_tool "$yq_target" >/dev/null 2>&1; then exit 1; fi
+    [[ ! -e "$yq_target" ]]
+    [[ -z "$(find "$fixture_dir" -name 'installed-yq.stage.*' -print)" ]]
+)
 mkdir -p "$fixture_dir/.acme.sh/example.com_ecc"
 touch "$fixture_dir/.acme.sh/example.com_ecc/fullchain.cer" "$fixture_dir/.acme.sh/example.com_ecc/example.com.key"
 touch "$fixture_dir/custom.crt" "$fixture_dir/custom.key"
@@ -76,5 +119,21 @@ touch "$fixture_dir/custom.crt" "$fixture_dir/custom.key"
 )
 
 [[ "$(bash "$REPO_ROOT/xray-socks.sh" --help)" == *"Usage: xray-socks.sh"* ]]
+if command -v yq >/dev/null 2>&1; then
+    (
+        GITHUB_CMD=""
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/xray-socks.sh"
+        xray_config_path="$fixture_dir/xray.yaml"
+        printf '%s\n' 'inbounds: []' 'outbounds: []' > "$xray_config_path"
+        remove_mode=0
+        initialize_ip_from_netstack() { :; }
+        add_socks_to_existing_config() { jq '.inbounds += [{"tag":"nokey-socks-1080","protocol":"socks","port":1080}]' "$patch_jq_source" > "$patch_tmp_out"; }
+        restart_xray_service() { :; }
+        output_socks_proxy() { :; }
+        apply_socks_change
+        yq -e '.inbounds[0].protocol == "socks"' "$xray_config_path" >/dev/null
+    )
+fi
 
 echo "All feature entrypoint tests passed."

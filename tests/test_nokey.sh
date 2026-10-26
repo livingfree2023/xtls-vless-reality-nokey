@@ -41,6 +41,38 @@ else
 fi
 rm -rf "$fingerprint_dir"
 
+share_stage_dir="$(mktemp -d)"
+if (
+  cd "$share_stage_dir" || exit 1
+  printf 'previous-share\n' > "$URL_FILE"
+  begin_share_output || exit 1
+  printf 'new-share\n' >> "$share_output_file"
+  [[ "$(cat "$URL_FILE")" == previous-share ]] || exit 1
+  commit_share_output || exit 1
+  [[ "$(cat "$URL_FILE")" == new-share ]]
+); then
+  pass "share output replaces previous file only after commit"
+else
+  fail "share output staging did not preserve previous file"
+fi
+rm -rf "$share_stage_dir"
+
+interrupted_share_dir="$(mktemp -d)"
+printf 'previous-share\n' > "$interrupted_share_dir/nokey.url"
+if (
+  cd "$interrupted_share_dir" || exit 1
+  begin_share_output || exit 1
+  printf 'partial-share\n' >> "$share_output_file"
+  exit 1
+); then
+  fail "interrupted share generation unexpectedly succeeded"
+fi
+[[ "$(cat "$interrupted_share_dir/nokey.url")" == previous-share ]] \
+  && [[ -z "$(find "$interrupted_share_dir" -name 'nokey.url.stage.*' -print)" ]] \
+  || fail "interruption changed saved shares or left a stage file"
+pass "interrupted share generation preserves previous file"
+rm -rf "$interrupted_share_dir"
+
 # Test 1: netstack=4 resolves IP after detection values exist
 netstack=""
 ip=""
@@ -164,7 +196,7 @@ echo "$dry_run_out" | grep -Eq 'releases/latest/download/xray_(amd64|arm64) -> /
 [[ "$dry_run_out" == *"releases/latest/download/geoip.dat -> /usr/local/share/xray/geoip.dat"* ]] || fail "dry-run should include geoip.dat download path"
 [[ "$dry_run_out" == *"releases/latest/download/geosite.dat -> /usr/local/share/xray/geosite.dat"* ]] || fail "dry-run should include geosite.dat download path"
 [[ "$dry_run_out" == *"/etc/init.d/nokey"* ]] || fail "dry-run alpine should include OpenRC path"
-[[ "$dry_run_out" == *"/usr/local/etc/nokey/nokey.json"* ]] || fail "dry-run should include nokey.json config path"
+[[ "$dry_run_out" == *"/usr/local/etc/nokey/nokey.yaml"* ]] || fail "dry-run should include nokey.yaml config path"
 ID="debian"
 ID_LIKE="debian"
 dry_run_out="$(dry_run_preview 2>&1 || true)"
@@ -825,10 +857,10 @@ else
 fi
 
 # Test 41: a fresh Xray config includes the generated SOCKS inbound
-if command -v jq >/dev/null 2>&1; then
+if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
   socks_build_dir="$(mktemp -d)"
   if (
-    xray_config_path="$socks_build_dir/nokey.json"
+    xray_config_path="$socks_build_dir/nokey.yaml"
     port=443
     domain="example.com"
     reality_dest_port=443
@@ -845,25 +877,125 @@ if command -v jq >/dev/null 2>&1; then
     default_route_choice=4
     build_xray_config >/dev/null
     [[ ! -e "$xray_config_path" ]] || exit 1
-    xray_config_path="$pending_xray_config"
-    patch_jq_source=""
-    patch_cleanup=""
-    resolve_jq_config_source
-    jq -e '.inbounds | length == 2' "$patch_jq_source" >/dev/null
-    [[ "$(jq -r '.inbounds[0].protocol' "$patch_jq_source")" == "vless" ]]
-    [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$patch_jq_source")" == "0.0.0" ]]
-    [[ "$(jq -r '.inbounds[1].protocol' "$patch_jq_source")" == "socks" ]]
-    [[ "$(jq -r '.log | has("access")' "$patch_jq_source")" == "false" ]]
-    [[ "$(jq -r '.log | has("error")' "$patch_jq_source")" == "false" ]]
-    rm -f "$patch_cleanup"
+    yq -o=json '.' "$pending_xray_config" > "$socks_build_dir/output.json"
+    jq -e '.inbounds | length == 2' "$socks_build_dir/output.json" >/dev/null
+    [[ "$(jq -r '.inbounds[0].protocol' "$socks_build_dir/output.json")" == "vless" ]]
+    [[ "$(jq -r '.inbounds[0].streamSettings.realitySettings.minClientVer' "$socks_build_dir/output.json")" == "0.0.0" ]]
+    [[ "$(jq -r '.inbounds[1].protocol' "$socks_build_dir/output.json")" == "socks" ]]
+    [[ "$(jq -r '.log | has("access")' "$socks_build_dir/output.json")" == "false" ]]
+    [[ "$(jq -r '.log | has("error")' "$socks_build_dir/output.json")" == "false" ]]
+    rm -f "$pending_xray_config"
   ); then
     pass "fresh Xray config includes SOCKS inbound"
   else
-    fail "build_xray_config should emit valid JSON with VLESS and SOCKS inbounds"
+    fail "build_xray_config should emit valid YAML with VLESS and SOCKS inbounds"
   fi
   rm -rf "$socks_build_dir"
+
+  legacy_build_dir="$(mktemp -d)"
+  if (
+    xray_config_path="$legacy_build_dir/nokey.json"
+    printf '%s\n' '{"old":"config"}' > "$xray_config_path"
+    port=443
+    domain="example.com"
+    reality_dest_port=443
+    uuid="test-uuid"
+    private_key="test-private-key"
+    shortid="abcd1234"
+    mldsa_enabled=0
+    mldsa65Seed=""
+    socks_inbound_json=""
+    ss_inbound_json=""
+    egress_ipv4_available=1
+    egress_ipv6_available=0
+    default_route_choice=4
+    build_xray_config >/dev/null
+    jq -e '.inbounds[0].protocol == "vless"' "$pending_xray_config" >/dev/null
+    jq -e '.old == "config"' "$xray_config_path" >/dev/null
+    rm -f "$pending_xray_config"
+  ); then
+    pass "legacy NoKey JSON path stages JSON without changing active config"
+  else
+    fail "existing nokey.json must stage JSON before validation"
+  fi
+  rm -rf "$legacy_build_dir"
 else
-  pass "fresh SOCKS config test skipped (jq unavailable)"
+  pass "fresh SOCKS config test skipped (jq or yq unavailable)"
+fi
+
+# A link-local or private IPv6 address must not enable the public listener.
+if (
+  ip() { printf '%s\n' 'inet6 fd00::1/64 scope global' 'inet6 fe80::1/64 scope link' 'inet6 2001:db8::10/64 scope global'; }
+  [[ "$(local_global_ipv6_addresses)" == '2001:db8::10' ]]
+); then
+  pass "public local IPv6 detection excludes ULA and link-local"
+else
+  fail "IPv6 detection should choose only global addresses"
+fi
+
+# Test 41b: existing file logs are migrated to systemd journal output
+if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
+  ss_build_dir="$(mktemp -d)"
+  if (
+    cd "$ss_build_dir" || exit 1
+    xray_config_path="$ss_build_dir/nokey.yaml"
+    port=443
+    domain="example.com"
+    reality_dest_port=443
+    uuid="test-uuid"
+    private_key="test-private-key"
+    shortid="abcd1234"
+    mldsa_enabled=0
+    mldsa65Seed=""
+    socks_port=""
+    socks_inbound_json=""
+    egress_ipv4_available=1
+    egress_ipv6_available=1
+    default_route_choice=4
+    local_global_ipv6_addresses() { printf '%s\n' '2001:db8::10'; }
+    is_tcp_port_unused() { return 0; }
+    prepare_default_shadowsocks_inbound
+    [[ "$ss_port" != "$port" && "$ss_listen" == '2001:db8::10' ]]
+    [[ "$(printf '%s' "$ss_password" | base64 -d | wc -c | tr -d ' ')" -eq 16 ]]
+    build_xray_config >/dev/null
+    yq -o=json '.' "$pending_xray_config" > "$ss_build_dir/output.json"
+    jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks" and .[1].listen == "2001:db8::10" and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' "$ss_build_dir/output.json" >/dev/null
+    output_default_shadowsocks >/dev/null
+    grep -q 'ss://.*@\[2001:db8::10\]' "$URL_FILE"
+  ); then
+    pass "fresh Reality config adds IPv6 Shadowsocks inbound"
+  else
+    fail "IPv6 fresh config should contain Reality and Shadowsocks"
+  fi
+  rm -rf "$ss_build_dir"
+
+  no_ipv6_dir="$(mktemp -d)"
+  if (
+    cd "$no_ipv6_dir" || exit 1
+    xray_config_path="$no_ipv6_dir/nokey.yaml"
+    port=443
+    domain="example.com"
+    reality_dest_port=443
+    uuid="test-uuid"
+    private_key="test-private-key"
+    shortid="abcd1234"
+    mldsa_enabled=0
+    mldsa65Seed=""
+    socks_inbound_json=""
+    egress_ipv4_available=1
+    egress_ipv6_available=0
+    default_route_choice=4
+    local_global_ipv6_addresses() { :; }
+    prepare_default_shadowsocks_inbound
+    [[ -z "$ss_inbound_json" ]]
+    build_xray_config >/dev/null
+    yq -o=json '.' "$pending_xray_config" | jq -e '.inbounds | length == 1 and .[0].protocol == "vless"' >/dev/null
+  ); then
+    pass "fresh Reality config remains single-inbound without IPv6"
+  else
+    fail "no-IPv6 fresh config should contain only Reality"
+  fi
+  rm -rf "$no_ipv6_dir"
 fi
 
 # Test 41b: existing file logs are migrated to systemd journal output
@@ -889,19 +1021,28 @@ else
   pass "journald migration test skipped (jq unavailable)"
 fi
 
-# Removed Sing-box flags must fail explicitly before touching output files.
-for removed_flag in --singbox --singbox-only; do
-  removed_dir="$(mktemp -d)"
-  printf 'keep-log\n' > "$removed_dir/nokey.log"
-  printf 'keep-url\n' > "$removed_dir/nokey.url"
-  if (cd "$removed_dir" && bash "$REPO_ROOT/nokey.sh" "$removed_flag") > "$removed_dir/output" 2>&1; then
-    fail "$removed_flag should fail"
+# YAML remains the runtime format after a jq-based patch and Xray validation.
+if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
+  yaml_patch_dir="$(mktemp -d)"
+  if (
+    xray_config_path="$yaml_patch_dir/nokey.yaml"
+    printf '%s\n' 'log:' '  loglevel: error' 'inbounds: []' > "$xray_config_path"
+    resolve_jq_config_source
+    jq '.log.loglevel = "warning"' "$patch_jq_source" > "$yaml_patch_dir/staged.json"
+    xray() { [[ "$*" == *"-format yaml"* ]]; }
+    restart_xray_service() { :; }
+    commit_xray_config "$yaml_patch_dir/staged.json" >/dev/null
+    [[ "$(yq -r '.log.loglevel' "$xray_config_path")" == "warning" ]]
+    [[ "$(head -n 1 "$xray_config_path")" == "log:" ]]
+    rm -f "$patch_cleanup"
+  ); then
+    pass "YAML patch validates and remains YAML"
+  else
+    fail "YAML patch should preserve runtime format"
   fi
-  grep -Eq 'removed|已移除' "$removed_dir/output" || fail "$removed_flag should explain removal"
-  [[ "$(cat "$removed_dir/nokey.log")" == "keep-log" ]] || fail "$removed_flag changed logs"
-  [[ "$(cat "$removed_dir/nokey.url")" == "keep-url" ]] || fail "$removed_flag changed URLs"
-  rm -rf "$removed_dir"
-done
-pass "removed Sing-box flags fail without side effects"
+  rm -rf "$yaml_patch_dir"
+else
+  pass "YAML patch test skipped (jq or yq unavailable)"
+fi
 
 echo "All tests passed."

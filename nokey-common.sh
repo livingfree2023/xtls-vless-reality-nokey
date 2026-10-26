@@ -7,6 +7,8 @@ fi
 if [[ -z "${URL_FILE:-}" ]]; then
     readonly URL_FILE="nokey.url"
 fi
+readonly SHADOWSOCKS_METHOD="2022-blake3-aes-128-gcm"
+readonly SHADOWSOCKS_TAG="nokey-shadowsocks-ipv6"
 if [[ -t 1 ]]; then
     readonly red=$'\033[91m'
     readonly green=$'\033[92m'
@@ -42,6 +44,139 @@ secure_output_file() {
     fi
     (umask 077; : >> "$output_path") || return 1
     chmod 600 "$output_path"
+}
+
+readonly NOKEY_YQ_VERSION="v4.54.1"
+readonly NOKEY_YQ_INSTALL_PATH="/usr/local/libexec/nokey/yq"
+xray_yaml_tool_path=""
+
+xray_yq_expected_sha256() {
+    case "$(uname -s):$(resolve_arch_name)" in
+        Linux:amd64) printf '%s\n' '8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f' ;;
+        Linux:arm64) printf '%s\n' '189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b' ;;
+        Darwin:amd64) printf '%s\n' '3a812fce205a4d67014fb71b7fa297092210e580df3d8f52dddc2cf3a599c22b' ;;
+        Darwin:arm64) printf '%s\n' 'fee511a181bd8b3e6b7da98842b41973bfac8cd3bcd341ed29a584620b5b2844' ;;
+        *) return 1 ;;
+    esac
+}
+
+xray_sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$file" | awk '{print $NF}'
+    else
+        return 1
+    fi
+}
+
+xray_yq_is_compatible() {
+    local candidate="$1" version=""
+    [[ -x "$candidate" ]] || return 1
+    version="$("$candidate" --version 2>/dev/null)" || return 1
+    [[ "$version" == *"version ${NOKEY_YQ_VERSION}"* ]]
+}
+
+configure_yq_shell_path() {
+    local tool_path="${1:-$NOKEY_YQ_INSTALL_PATH}" tool_dir="" rc_file="" export_line=""
+    xray_yq_is_compatible "$tool_path" || return 1
+    tool_dir="$(dirname "$tool_path")"
+    case ":${PATH}:" in
+        *":${tool_dir}:"*) ;;
+        *) PATH="${tool_dir}:${PATH}"; export PATH ;;
+    esac
+    export_line="case \":\$PATH:\" in *\":${tool_dir}:\"*) ;; *) export PATH=\"${tool_dir}:\$PATH\" ;; esac"
+    for rc_file in "${HOME}/.bashrc" "${HOME}/.zshrc"; do
+        [[ -f "$rc_file" ]] || continue
+        if ! grep -Fxq "$export_line" "$rc_file"; then
+            printf '\n%s\n' "$export_line" >> "$rc_file" || return 1
+        fi
+    done
+}
+
+install_xray_yaml_tool() (
+    local target="${1:-$NOKEY_YQ_INSTALL_PATH}" install_dir="" stage="" platform="" arch=""
+    local expected="" actual="" source_url=""
+    install_dir="$(dirname "$target")"
+    arch="$(resolve_arch_name)" || { error "不支持的yq架构 / Unsupported yq architecture."; return 1; }
+    case "$(uname -s)" in
+        Linux) platform="linux_${arch}" ;;
+        Darwin) platform="darwin_${arch}" ;;
+        *) error "不支持的yq系统 / Unsupported yq operating system."; return 1 ;;
+    esac
+    expected="$(xray_yq_expected_sha256)" || return 1
+    if [[ "$target" == "$NOKEY_YQ_INSTALL_PATH" && "$(id -u)" -ne 0 ]]; then
+        error "安装yq需要root权限 / Installing yq requires root."
+        return 1
+    fi
+    if [[ -L "$target" || -L "$install_dir" ]]; then
+        error "yq安装路径不安全 / Unsafe yq installation path."
+        return 1
+    fi
+    command -v curl >/dev/null 2>&1 || { error "安装yq需要curl / Installing yq requires curl."; return 1; }
+    mkdir -p "$install_dir" || return 1
+    stage="$(mktemp "${target}.stage.XXXXXX")" || return 1
+    trap 'rm -f "$stage"' EXIT
+    source_url="https://github.com/mikefarah/yq/releases/download/${NOKEY_YQ_VERSION}/yq_${platform}"
+    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 90 "$source_url" -o "$stage" 2>>"${LOG_FILE:-/dev/null}"; then
+        error "下载yq失败 / Could not download yq."
+        return 1
+    fi
+    actual="$(xray_sha256_file "$stage")" || { error "无法校验yq的SHA-256 / Cannot verify yq SHA-256."; return 1; }
+    if [[ "$actual" != "$expected" ]]; then
+        error "yq校验和不匹配 / yq checksum mismatch."
+        return 1
+    fi
+    chmod 755 "$stage" || return 1
+    xray_yq_is_compatible "$stage" || { error "yq版本或架构校验失败 / yq version or architecture check failed."; return 1; }
+    mv -f "$stage" "$target" || return 1
+)
+
+require_xray_yaml_tool() {
+    local candidate=""
+    for candidate in "$NOKEY_YQ_INSTALL_PATH" "$(command -v yq 2>/dev/null || true)"; do
+        if [[ -n "$candidate" ]] && xray_yq_is_compatible "$candidate"; then
+            xray_yaml_tool_path="$candidate"
+            if [[ "$candidate" == "$NOKEY_YQ_INSTALL_PATH" ]]; then
+                configure_yq_shell_path "$candidate" || warn "Could not add yq to shell PATH; check ~/.bashrc and ~/.zshrc"
+            fi
+            return 0
+        fi
+    done
+    task_start "安装已验证的yq / Install verified yq"
+    if ! install_xray_yaml_tool; then
+        task_fail
+        return 1
+    fi
+    xray_yaml_tool_path="$NOKEY_YQ_INSTALL_PATH"
+    configure_yq_shell_path "$xray_yaml_tool_path" || warn "Could not add yq to shell PATH; check ~/.bashrc and ~/.zshrc"
+    task_done
+}
+
+xray_config_to_json() {
+    local input="$1" output="$2"
+    case "$input" in
+        *.yaml|*.yml)
+            require_xray_yaml_tool || return 1
+            "$xray_yaml_tool_path" -o=json '.' "$input" > "$output" || return 1
+            ;;
+        *) jq '.' "$input" > "$output" || return 1 ;;
+    esac
+    jq -e 'type == "object"' "$output" >/dev/null
+}
+
+xray_json_to_config() {
+    local input="$1" output="$2" target="$3"
+    case "$target" in
+        *.yaml|*.yml)
+            require_xray_yaml_tool || return 1
+            "$xray_yaml_tool_path" -p=json -o=yaml '.' "$input" > "$output" || return 1
+            ;;
+        *) cat "$input" > "$output" || return 1 ;;
+    esac
 }
 
 # Preserve useful legacy diagnostics while removing credentials written by older
@@ -95,7 +230,7 @@ init_output_files() {
 sanitize_log_stream() {
     local log_line="" secret_name="" secret_value="" secret_part=""
     while IFS= read -r log_line || [[ -n "$log_line" ]]; do
-        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password; do
+        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password ss_password; do
             secret_value="${!secret_name:-}"
             while [[ -n "$secret_value" ]]; do
                 secret_part="${secret_value%%$'\n'*}"
@@ -527,6 +662,10 @@ install_dependencies() {
                 lsof)
                     package_name="lsof"
                     ;;
+                ip)
+                    package_name="iproute2"
+                    [[ "$manager" == yum || "$manager" == dnf ]] && package_name="iproute"
+                    ;;
             esac
             eval "$install_cmd" "$package_name"  >> "$LOG_FILE" 2>&1
             if ! command -v "$tool" > /dev/null 2>&1; then
@@ -638,6 +777,30 @@ is_port_reusable() {
 random_hex() {
     local byte_count="$1"
     od -An -N "$byte_count" -tx1 /dev/urandom | tr -d '[:space:]'
+}
+
+local_global_ipv6_addresses() {
+    command -v ip >/dev/null 2>&1 || return 1
+    ip -6 addr show 2>/dev/null | awk '/inet6 / && /scope[ :]global/ {split($2, address, "/"); if (address[1] !~ /^(fc|fd|fe[89ab]|ff)/ && address[1] != "::" && address[1] != "::1") print address[1]}'
+}
+
+select_shadowsocks_ipv6() {
+    local addresses=""
+    addresses="$(local_global_ipv6_addresses)" || {
+        error "Cannot inspect local IPv6 addresses; install iproute2"
+        return 1
+    }
+    [[ -n "$ss_listen" ]] || ss_listen="${addresses%%$'\n'*}"
+    if [[ -z "$ss_listen" || "$ss_listen" != *:* || "$ss_listen" == *%* ]] ||
+       ! printf '%s\n' "$addresses" | awk -v target="$ss_listen" '$0 == target {found=1} END {exit !found}'; then
+        error "A local global IPv6 address is required / 需要本机全局IPv6地址"
+        return 1
+    fi
+}
+
+generate_shadowsocks_password() {
+    ss_password="$(head -c 16 /dev/urandom | base64 | tr -d '\n')"
+    [[ -n "$ss_password" ]]
 }
 
 is_tcp_port_unused() {

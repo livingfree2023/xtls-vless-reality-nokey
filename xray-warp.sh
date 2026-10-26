@@ -95,12 +95,14 @@ elif [[ "$PEER_EP" != *":"* ]]; then
   PEER_EP="${PEER_EP}:2408"
 fi
 
-if [[ -f "/usr/local/etc/nokey/nokey.json" ]]; then
+if [[ -f "/usr/local/etc/nokey/nokey.yaml" ]]; then
+  XRAY_CONFIG="/usr/local/etc/nokey/nokey.yaml"
+elif [[ -f "/usr/local/etc/nokey/nokey.json" ]]; then
   XRAY_CONFIG="/usr/local/etc/nokey/nokey.json"
 elif [[ -f "/usr/local/etc/xray/config.json" ]]; then
   XRAY_CONFIG="/usr/local/etc/xray/config.json"
 else
-  XRAY_CONFIG="/usr/local/etc/nokey/nokey.json"
+  XRAY_CONFIG="/usr/local/etc/nokey/nokey.yaml"
 fi
 
 # 构造标准 Xray-core outbound JSON（WARP WireGuard 出口）
@@ -136,7 +138,14 @@ if [ ! -f "$XRAY_CONFIG" ]; then
   exit 1
 fi
 
-if ! jq empty "$XRAY_CONFIG" >/dev/null 2>&1; then
+CONFIG_JSON_SOURCE="$XRAY_CONFIG"
+case "$XRAY_CONFIG" in
+  *.yaml|*.yml)
+    CONFIG_JSON_SOURCE=$(mktemp /tmp/nokey-warp-json.XXXXXX)
+    xray_config_to_json "$XRAY_CONFIG" "$CONFIG_JSON_SOURCE" || exit 1
+    ;;
+esac
+if ! jq empty "$CONFIG_JSON_SOURCE" >/dev/null 2>&1; then
   echo "错误: Xray 配置文件 $XRAY_CONFIG 不是有效的 JSON。" >&2
   exit 1
 fi
@@ -178,7 +187,7 @@ PATCHED_JSON=$(jq \
         (if any(.routing.rules[]?; (.inboundTag? // []) | index("warp-in-socks")) then [] else [$rule_inbound] end) +
         (if any(.routing.rules[]?; (.domain? != null) and (.outboundTag? == "warp-out")) then [] else [$rule_domain] end)
       ))
-  ' "$XRAY_CONFIG")
+  ' "$CONFIG_JSON_SOURCE")
 
 # 校验合并结果仍为合法 JSON
 if ! jq empty >/dev/null 2>&1 <<<"$PATCHED_JSON"; then
@@ -187,10 +196,14 @@ if ! jq empty >/dev/null 2>&1 <<<"$PATCHED_JSON"; then
 fi
 
 # 原子写入（临时文件 + mv），保留原权限
-TMP_FILE=$(mktemp)
-trap 'rm -f "$TMP_FILE"' EXIT
-printf '%s\n' "$PATCHED_JSON" > "$TMP_FILE"
-chmod 644 "$TMP_FILE"
+TMP_FILE=$(mktemp "${XRAY_CONFIG}.stage.XXXXXX")
+trap 'rm -f "$TMP_FILE"; [[ "$CONFIG_JSON_SOURCE" == "$XRAY_CONFIG" ]] || rm -f "$CONFIG_JSON_SOURCE"' EXIT
+if [[ "$XRAY_CONFIG" == *.yaml || "$XRAY_CONFIG" == *.yml ]]; then
+  printf '%s\n' "$PATCHED_JSON" | "$xray_yaml_tool_path" -p=json -o=yaml '.' - > "$TMP_FILE"
+else
+  printf '%s\n' "$PATCHED_JSON" > "$TMP_FILE"
+fi
+chmod 600 "$TMP_FILE"
 mv "$TMP_FILE" "$XRAY_CONFIG"
 
 echo "已更新 $XRAY_CONFIG (warp-out / warp-in-socks / 路由规则)。" >&2

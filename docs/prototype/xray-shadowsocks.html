@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>NoKey Xray inbound prototype</title><style>body{font:16px system-ui;background:#10151c;color:#e8edf3;max-width:720px;margin:5rem auto;padding:1rem}pre{background:#1a2430;padding:2rem;border-radius:12px;line-height:1.7}</style><h1>Reality with IPv6 Shadowsocks</h1><pre>./nokey.sh  or  menu option 1
+
+Detected local IPv6: 2001:db8::10
+Xray inbounds:
+  VLESS Reality     TCP :443
+  Shadowsocks 2022  TCP + UDP [2001:db8::10]:PORT
+
+After validation and Xray restart:
+vless://…
+ss://…@[2001:db8::10]:PORT#host-shadowsocks-ipv6
+
+On an IPv4-only VPS, only the Reality inbound is created.</pre></html>

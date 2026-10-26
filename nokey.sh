@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.33"
+readonly SCRIPT_VERSION="2026.40"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -29,7 +29,7 @@ readonly SERVICE_NAME_ALPINE="nokey"
 readonly XRAY_SERVICE_USER="nobody"
 readonly XRAY_ASSET_DIR="/usr/local/share/xray"
 readonly NOKEY_CONFIG_DIR="/usr/local/etc/nokey"
-readonly NOKEY_CONFIG_FILE="${NOKEY_CONFIG_DIR}/nokey.json"
+readonly NOKEY_CONFIG_FILE="${NOKEY_CONFIG_DIR}/nokey.yaml"
 readonly GITHUB_RELEASE_BASE_URL="https://github.com/livingfree2023/nokey/releases/latest/download"
 readonly GITHUB_RELEASE_API_URL="https://api.github.com/repos/livingfree2023/nokey/releases/latest"
 readonly GITHUB_NOKEY_RC_URL="https://raw.githubusercontent.com/livingfree2023/nokey/refs/heads/main/nokey.rc"
@@ -68,11 +68,32 @@ arg_count=0
 xray_config_path="$NOKEY_CONFIG_FILE"
 patch_jq_source=""
 patch_cleanup=""
+share_output_file=""
+
+begin_share_output() {
+    share_output_file="$(mktemp "${URL_FILE}.stage.XXXXXX")" || return 1
+    chmod 600 "$share_output_file" || return 1
+    trap 'rm -f "$share_output_file"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+}
+
+commit_share_output() {
+    [[ -n "$share_output_file" && -s "$share_output_file" ]] || return 1
+    mv -f "$share_output_file" "$URL_FILE" || return 1
+    share_output_file=""
+    trap - EXIT HUP INT TERM
+}
 patch_tmp_out=""
 socks_port=""
 socks_username=""
 socks_password=""
 socks_inbound_json=""
+ss_listen=""
+ss_port=""
+ss_password=""
+ss_inbound_json=""
 random_unused_port=""
 arg_port_set=0
 arg_domain_set=0
@@ -590,6 +611,10 @@ install_dependencies() {
                 lsof)
                     package_name="lsof"
                     ;;
+                ip)
+                    package_name="iproute2"
+                    [[ "$manager" == yum || "$manager" == dnf ]] && package_name="iproute"
+                    ;;
             esac
             run_logged dependency_install eval "$install_cmd" "$package_name" || { task_fail; return 1; }
             if ! command -v "$tool" > /dev/null 2>&1; then
@@ -854,7 +879,18 @@ load_runtime_vars_from_existing_config() {
         error "配置文件不可读 / Config is not readable: $config_path"
         exit 1
     fi
-    if ! jq empty "$config_path" >/dev/null 2>/tmp/nokey-jq-raw.err; then
+    case "$config_path" in
+        *.yaml|*.yml)
+            jsonc_tmp="$(mktemp /tmp/nokey-config-json.XXXXXX)" || return 1
+            if ! xray_config_to_json "$config_path" "$jsonc_tmp"; then
+                rm -f "$jsonc_tmp"
+                task_fail
+                return 1
+            fi
+            jq_target="$jsonc_tmp"
+            ;;
+    esac
+    if [[ "$jq_target" == "$config_path" ]] && ! jq empty "$config_path" >/dev/null 2>/tmp/nokey-jq-raw.err; then
         jq_error="$(cat /tmp/nokey-jq-raw.err 2>/dev/null || true)"
         log_verbose "jq raw parse error: ${jq_error}"
 
@@ -1015,7 +1051,10 @@ install_xray() {
         log_verbose "Downloading service file: ${GITHUB_NOKEY_RC_URL} -> ${nokey_rc_tmp}"
         run_logged download curl -fSL "${GITHUB_NOKEY_RC_URL}" -o "${nokey_rc_tmp}" || { task_fail; error "下载nokey.rc失败 / Failed to download nokey.rc"; exit 1; }
         configure_openrc_crash_restart "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1 || { task_fail; error "配置nokey崩溃自动重启失败 / Failed to configure nokey crash restart"; exit 1; }
-        install -m 755 "${nokey_rc_tmp}" /etc/init.d/"$SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "安装/etc/init.d/$SERVICE_NAME_ALPINE失败 / Failed to install /etc/init.d/$SERVICE_NAME_ALPINE"; exit 1; }
+        sed -e "s@/usr/local/etc/nokey/nokey\\.json@${xray_config_path}@g" \
+            -e "s@/usr/local/etc/nokey/nokey\\.yaml@${xray_config_path}@g" \
+            "${nokey_rc_tmp}" > /etc/init.d/"$SERVICE_NAME_ALPINE" || { task_fail; return 1; }
+        chmod 755 /etc/init.d/"$SERVICE_NAME_ALPINE" || return 1
         rm -f "${nokey_rc_tmp}" >> "$LOG_FILE" 2>&1
         log_verbose "Installed OpenRC service file from nokey.rc"
         rc-update add "$SERVICE_NAME_ALPINE" >> "$LOG_FILE" 2>&1 || { task_fail; error "启用OpenRC服务$SERVICE_NAME_ALPINE失败 / Failed to enable OpenRC service $SERVICE_NAME_ALPINE"; exit 1; }
@@ -1031,6 +1070,8 @@ install_xray() {
         run_logged download curl -fSL "${GITHUB_NOKEY_SERVICE_URL}" -o "${nokey_service_tmp}" || { task_fail; error "下载nokey.service失败 / Failed to download nokey.service"; exit 1; }
         # shellcheck disable=SC2016
         sed -e "s/\\\$INSTALL_USER/${XRAY_SERVICE_USER}/g" \
+            -e "s@/usr/local/etc/nokey/nokey\\.json@${xray_config_path}@g" \
+            -e "s@/usr/local/etc/nokey/nokey\\.yaml@${xray_config_path}@g" \
             -e '/\${temp_CapabilityBoundingSet}/d' \
             -e '/\${temp_AmbientCapabilities}/d' \
             -e '/\${temp_NoNewPrivileges}/d' \
@@ -1204,10 +1245,6 @@ parse_args() {
         --realm-only)
             realm_mode=1
             realm_only=1
-            ;;
-        --singbox|--singbox-only)
-            display_result "Sing-box已移除 / Sing-box support has been removed." >&2
-            exit 1
             ;;
         --default-route)
             default_route_mode=1
@@ -1599,6 +1636,39 @@ generate_crypto() {
     fi
 }
 
+prepare_default_shadowsocks_inbound() {
+    local addresses=""
+    ss_inbound_json=""
+    ss_listen=""
+    ss_port=""
+    ss_password=""
+    addresses="$(local_global_ipv6_addresses)" || return 1
+    if [[ -z "$addresses" ]]; then
+        log_info "event=shadowsocks_skip reason=no_local_global_ipv6"
+        return 0
+    fi
+    ss_listen="${addresses%%$'\n'*}"
+    select_shadowsocks_ipv6 || return 1
+    select_random_unused_port "" "$port" "$socks_port" || return 1
+    ss_port="$random_unused_port"
+    generate_shadowsocks_password || return 1
+    ss_inbound_json=$(cat <<-EOF
+{
+  "tag": "${SHADOWSOCKS_TAG}",
+  "listen": "${ss_listen}",
+  "port": ${ss_port},
+  "protocol": "shadowsocks",
+  "settings": {
+    "network": "tcp,udp",
+    "method": "${SHADOWSOCKS_METHOD}",
+    "password": "${ss_password}"
+  }
+}
+EOF
+    )
+    log_info "event=shadowsocks_prepared family=ipv6 port=$ss_port"
+}
+
 build_xray_config() {
     build_default_route_settings || return 1
     # info "网络栈netstack = ${cyan}${netstack}${none}"
@@ -1614,134 +1684,86 @@ build_xray_config() {
     fallback_burst_bytes_per_sec=$((250000 * (85 + RANDOM % 31) / 100))
 
     reality_template=$(cat <<-EOF
-      {
-        "log": {
-          "loglevel": "error"
-        },
-        "inbounds": [
-          {
-            "port": ${port},
-            "protocol": "vless",
-            "settings": {
-              "clients": [
-                {
-                  "id": "${uuid}",
-                  "flow": "xtls-rprx-vision"
-                }
-              ],
-              "decryption": "none"
-            },
-            "streamSettings": {
-              "network": "tcp",
-              "security": "reality",
-              "realitySettings": {
-                "show": false,
-                "minClientVer": "0.0.0",
-                "dest": "${domain}:${reality_dest_port}",
-                "xver": 0,
-                "serverNames": ["${domain}"],
-                "privateKey": "${private_key}",
-                "mldsa65Seed": "${mldsa65Seed}",
-                "shortIds": ["${shortid}"],
-                "limitFallbackUpload": {
-                  "afterBytes": 0,
-                  "bytesPerSec": ${fallback_bytes_per_sec},
-                  "burstBytesPerSec": ${fallback_burst_bytes_per_sec}
-                },
-                "limitFallbackDownload": {
-                  "afterBytes": 0,
-                  "bytesPerSec": ${fallback_bytes_per_sec},
-                  "burstBytesPerSec": ${fallback_burst_bytes_per_sec}
-                }
-              }
-            },
-            "sniffing": {
-              "enabled": true,
-              "destOverride": ["http", "tls", "quic"],
-              "routeOnly": true
-            }
-          }${socks_inbound_json:+,
-${socks_inbound_json}}
-        ],
-        "outbounds": [
-          ${default_outbound_json},
-          {
-            "protocol": "freedom",
-            "streamSettings": {
-              "sockopt": {
-                "domainStrategy": "ForceIPv4"
-              }
-            },
-            "tag": "force_ipv4"
-          },
-          {
-            "protocol": "freedom",
-            "streamSettings": {
-              "sockopt": {
-                "domainStrategy": "ForceIPv6"
-              }
-            },
-            "tag": "force_ipv6"
-          },
-          {
-            "tag": "warp_out",
-            "protocol": "socks",
-            "settings": {
-                "servers": [
-                    {
-                        "address": "127.0.0.1",
-                        "port": 40000
-                    }
-                ]
-            }
-          },
-          {
-            "protocol": "blackhole",
-            "tag": "block"
-          }
-        ],
-        "dns": {
-          "servers": ${dns_servers_json},
-          "queryStrategy": "${dns_query_strategy}"
-        },
-        "routing": {
-          "domainStrategy": "IPIfNonMatch",
-          "rules": [
-//            {
-//              "type": "field",
-//              "domain": ["geosite:"],
-//              "outboundTag": "force_ipv4"
-//            },
-//            {
-//              "type": "field",
-//              "domain": ["geosite:"],
-//              "outboundTag": "force_ipv6"
-//            },
-//            {
-//              "type": "field",
-//              "domain": ["geosite:"],
-//              "outboundTag": "warp_out"
-//            },
-            {
-              "type": "field",
-              "ip": ["geoip:private","geoip:cn"],
-              "outboundTag": "block"
-            },
-            {
-              "type": "field",
-              "outboundTag": "block",
-              "protocol": [
-                "bittorrent"
-              ]
-            }
-          ]
-        }
-      }
+log:
+  loglevel: error
+inbounds:
+  - port: ${port}
+    protocol: vless
+    settings:
+      clients:
+        - id: "${uuid}"
+          flow: xtls-rprx-vision
+      decryption: none
+    streamSettings:
+      network: tcp
+      security: reality
+      realitySettings:
+        show: false
+        minClientVer: "0.0.0"
+        dest: "${domain}:${reality_dest_port}"
+        xver: 0
+        serverNames: ["${domain}"]
+        privateKey: "${private_key}"
+        shortIds: ["${shortid}"]
+        limitFallbackUpload:
+          afterBytes: 0
+          bytesPerSec: ${fallback_bytes_per_sec}
+          burstBytesPerSec: ${fallback_burst_bytes_per_sec}
+        limitFallbackDownload:
+          afterBytes: 0
+          bytesPerSec: ${fallback_bytes_per_sec}
+          burstBytesPerSec: ${fallback_burst_bytes_per_sec}
+    sniffing:
+      enabled: true
+      destOverride: [http, tls, quic]
+      routeOnly: true
+outbounds:
+  - ${default_outbound_json}
+  - protocol: freedom
+    streamSettings:
+      sockopt:
+        domainStrategy: ForceIPv4
+    tag: force_ipv4
+  - protocol: freedom
+    streamSettings:
+      sockopt:
+        domainStrategy: ForceIPv6
+    tag: force_ipv6
+  - tag: warp_out
+    protocol: socks
+    settings:
+      servers:
+        - address: "127.0.0.1"
+          port: 40000
+  - protocol: blackhole
+    tag: block
+dns:
+  servers: ${dns_servers_json}
+  queryStrategy: "${dns_query_strategy}"
+routing:
+  domainStrategy: IPIfNonMatch
+  rules:
+    # Add custom routing rules above the default block rules.
+    - type: field
+      ip: ["geoip:private", "geoip:cn"]
+      outboundTag: block
+    - type: field
+      outboundTag: block
+      protocol: [bittorrent]
 EOF
     )
-    if [[ $mldsa_enabled != 1 ]]; then
-      reality_template=$(echo "$reality_template" | sed '/"mldsa65Seed":/d')
+    if [[ "$mldsa_enabled" -eq 1 ]]; then
+        reality_template="$(printf '%s\n' "$reality_template" | sed '/privateKey:/a\        mldsa65Seed: "'"$mldsa65Seed"'"')"
     fi
+    local inbound_json="" inbound_yaml="" inbound_entry=""
+    for inbound_json in "$socks_inbound_json" "$ss_inbound_json"; do
+        [[ -n "$inbound_json" ]] || continue
+        require_xray_yaml_tool || return 1
+        inbound_yaml="$(printf '%s\n' "$inbound_json" | "$xray_yaml_tool_path" -p=json -o=yaml '.' -)" || return 1
+        inbound_entry="$(printf '%s\n' "$inbound_yaml" | sed '1s/^/  - /; 2,$s/^/    /')"
+        reality_template="${reality_template/outbounds:/$inbound_entry
+outbounds:}"
+    done
     local config_path="$xray_config_path"
     local config_dir=""
     task_start "快好了，手搓 / Configuring $config_path"
@@ -1757,7 +1779,18 @@ EOF
     fi
 
     pending_xray_config="$(mktemp "${config_path}.stage.XXXXXX")" || return 1
-    if ! printf '%s\n' "$reality_template" > "$pending_xray_config"; then
+    local staged_ok=0
+    case "$config_path" in
+        *.yaml|*.yml)
+            printf '%s\n' "$reality_template" > "$pending_xray_config" && staged_ok=1
+            ;;
+        *)
+            if require_xray_yaml_tool && printf '%s\n' "$reality_template" | "$xray_yaml_tool_path" -o=json '.' - > "$pending_xray_config"; then
+                staged_ok=1
+            fi
+            ;;
+    esac
+    if [[ "$staged_ok" -ne 1 ]]; then
         rm -f "$pending_xray_config"
         pending_xray_config=""
         task_fail
@@ -1962,8 +1995,24 @@ commit_xray_config() {
         error "配置目标不安全或暂存配置缺失 / Unsafe config target or missing staged config."
         return 1
     fi
+    case "$target" in
+        *.yaml|*.yml)
+            if jq empty "$staged" >/dev/null 2>&1; then
+                local yaml_stage=""
+                yaml_stage="$(mktemp "${target}.stage.XXXXXX")" || return 1
+                if ! xray_json_to_config "$staged" "$yaml_stage" "$target"; then
+                    rm -f "$yaml_stage"
+                    return 1
+                fi
+                rm -f "$staged"
+                staged="$yaml_stage"
+            fi
+            ;;
+    esac
     chmod 600 "$staged" || return 1
-    if ! run_logged config_validate xray run -test -format json -c stdin: < "$staged"; then
+    local config_format="json"
+    case "$target" in *.yaml|*.yml) config_format="yaml" ;; esac
+    if ! run_logged config_validate xray run -test -format "$config_format" -c stdin: < "$staged"; then
         error "Xray配置校验失败，原配置已保留 / Configuration validation failed; original configuration preserved."
         rm -f "$staged"
         return 1
@@ -2016,6 +2065,7 @@ configure_xray() {
         fi
         initialize_variables
         generate_crypto
+        prepare_default_shadowsocks_inbound || return 1
         if [[ "$addsocks_mode" -eq 1 ]]; then
             task_start "生成SOCKS5入站 / Generate SOCKS5 inbound"
             prepare_socks_inbound || { task_fail; return 1; }
@@ -2050,6 +2100,18 @@ resolve_jq_config_source() {
         error "缺少配置文件: $config_path，补丁模式需要现有配置文件 / Missing config: $config_path. Patch modes require an existing config file."
         return 1
     fi
+    case "$config_path" in
+        *.yaml|*.yml)
+            patch_cleanup="$(mktemp /tmp/nokey-config-json.XXXXXX)" || return 1
+            if ! xray_config_to_json "$config_path" "$patch_cleanup"; then
+                rm -f "$patch_cleanup"
+                patch_cleanup=""
+                return 1
+            fi
+            patch_jq_source="$patch_cleanup"
+            return 0
+            ;;
+    esac
     if jq empty "$config_path" >/dev/null 2>&1; then
         patch_jq_source="$config_path"
         return 0
@@ -2168,6 +2230,7 @@ is_tcp_port_unused() {
 select_random_unused_port() {
     local config_source="${1:-}"
     local excluded_port="${2:-}"
+    local second_excluded_port="${3:-}"
     local candidate=""
     local attempt=0
 
@@ -2176,6 +2239,7 @@ select_random_unused_port() {
         candidate=$((10000 + (RANDOM * 32768 + RANDOM) % 50001))
         attempt=$((attempt + 1))
         [[ -n "$excluded_port" && "$candidate" == "$excluded_port" ]] && continue
+        [[ -n "$second_excluded_port" && "$candidate" == "$second_excluded_port" ]] && continue
         if [[ -n "$config_source" ]] && jq -e --argjson port "$candidate" '.inbounds[]? | select(.port == $port)' "$config_source" >/dev/null 2>&1; then
             continue
         fi
@@ -2203,7 +2267,7 @@ prepare_socks_inbound() {
     fi
 
     # Avoid both existing config ports and currently listening sockets.
-    if ! select_random_unused_port "$config_source" "${port:-}"; then
+    if ! select_random_unused_port "$config_source" "${port:-}" "${ss_port:-}"; then
         error "没有找到可用的SOCKS端口 / Could not find an unused SOCKS port."
         return 1
     fi
@@ -2261,8 +2325,8 @@ output_socks_proxy() {
     display_result "$proxy_url"
     info "SOCKS5测试命令 / SOCKS5 test command:"
     display_result "$curl_command"
-    echo "$proxy_url" >> "$URL_FILE"
-    echo "$curl_command" >> "$URL_FILE"
+    echo "$proxy_url" >> "${share_output_file:-$URL_FILE}"
+    echo "$curl_command" >> "${share_output_file:-$URL_FILE}"
 }
 
 patch_existing_xray_config() {
@@ -2530,7 +2594,7 @@ show_help() {
   display_result "  --mldsa65Seed=STRING  设置ML-DSA-65私钥 (默认: 自动生成) / Set ML-DSA-65 private key"
   display_result "  --mldsa65Verify=STRING  设置ML-DSA-65公钥 (默认: 自动生成) / Set ML-DSA-65 public key"
   display_result "  --caddy            从运行的Caddy服务自动检测域名和端口 / Detect domain and port from Caddy service"
-  display_result "  --keepconfig       保留现有配置并从中生成输出链接 / Keep existing nokey.json and generate links from it"
+  display_result "  --keepconfig       保留现有配置并从中生成输出链接 / Keep existing Xray config and generate links from it"
   display_result "  --add-limiter      为现有配置添加REALITY回落限速(独立模式, 不能与其他参数连用) / Add REALITY fallback rate limit to existing config (standalone, no other flags)"
   display_result "  --change-sni       仅更换现有配置的REALITY SNI(独立模式, 不能与其他参数连用) / Re-randomize the REALITY SNI in existing config (standalone, no other flags)"
   display_result "  --addsocks         添加随机端口和凭据的SOCKS5入站；Xray运行时仅修补现有配置 / Add a SOCKS5 inbound with random port and credentials; patch only when Xray is running"
@@ -2619,6 +2683,16 @@ dry_run_preview() {
 
     info "检测到系统 / Detected OS: ${os_family} | 架构 / Architecture: ${arch_name}"
 
+    if [[ "$keepconfig" -ne 1 ]]; then
+        local preview_ipv6=""
+        preview_ipv6="$(local_global_ipv6_addresses 2>/dev/null | head -n 1)" || true
+        if [[ -n "$preview_ipv6" ]]; then
+            info "将添加Shadowsocks 2022 IPv6入站 / Would add Shadowsocks 2022 inbound on ${preview_ipv6}"
+        else
+            info "未找到本机全局IPv6地址，仅生成Reality入站 / No local global IPv6; Reality inbound only"
+        fi
+    fi
+
     info "将创建目录 / Would create directories:"
     info "  /usr/local/bin"
     info "  /usr/local/share/xray"
@@ -2628,6 +2702,11 @@ dry_run_preview() {
     info "  ${GITHUB_RELEASE_BASE_URL}/${arch_binary_name} -> /usr/local/bin/xray"
     info "  ${GITHUB_RELEASE_BASE_URL}/geoip.dat -> /usr/local/share/xray/geoip.dat"
     info "  ${GITHUB_RELEASE_BASE_URL}/geosite.dat -> /usr/local/share/xray/geosite.dat"
+    if [[ "$xray_config_path" == *.yaml || "$xray_config_path" == *.yml ]] &&
+       ! xray_yq_is_compatible "$NOKEY_YQ_INSTALL_PATH" &&
+       ! xray_yq_is_compatible "$(command -v yq 2>/dev/null || true)"; then
+        info "  https://github.com/mikefarah/yq/releases/download/${NOKEY_YQ_VERSION}/yq_$(uname -s | tr '[:upper:]' '[:lower:]')_${arch_name} -> ${NOKEY_YQ_INSTALL_PATH} (SHA-256 verified)"
+    fi
 
     info "将设置权限 / Would set permission:"
     info "  chmod 755 /usr/local/bin/xray"
@@ -2692,13 +2771,13 @@ generate_share_links() {
     if [[ $mldsa_enabled == 1 ]]; then
       vless_reality_mldsa_url="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}&pqv=${mldsa65Verify}#${current_hostname}"
       display_result "${vless_reality_mldsa_url}"
-      echo "$vless_reality_mldsa_url" >> "$URL_FILE"
+      echo "$vless_reality_mldsa_url" >> "${share_output_file:-$URL_FILE}"
       info "不含mldsa / Without mldsa:"
       display_result "${vless_reality_url_short}"
-      echo "$vless_reality_url_short" >> "$URL_FILE"
+      echo "$vless_reality_url_short" >> "${share_output_file:-$URL_FILE}"
     else
       display_result "${vless_reality_url_short}"
-      echo "$vless_reality_url_short" >> "$URL_FILE"
+      echo "$vless_reality_url_short" >> "${share_output_file:-$URL_FILE}"
     fi
 }
 
@@ -2730,7 +2809,7 @@ EOF
 )
     info "Clash.meta 配置 / Clash.meta config:"
     display_result "${clash_meta_config}"
-    echo "$clash_meta_config" >> "$URL_FILE"
+    echo "$clash_meta_config" >> "${share_output_file:-$URL_FILE}"
 }
 
 # Emit an extra IPv6 share URL + clash entry when the box is dual-stack but the
@@ -2742,7 +2821,7 @@ generate_ipv6_variants() {
     ipv6_link="vless://${uuid}@[${IPv6}]:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}-ipv6"
     info "分享链接 (IPv6) / Share Link (IPv6):"
     display_result "${ipv6_link}"
-    echo "$ipv6_link" >> "$URL_FILE"
+    echo "$ipv6_link" >> "${share_output_file:-$URL_FILE}"
 
     local ipv6_clash
     ipv6_clash=$(cat <<-EOF
@@ -2764,7 +2843,28 @@ EOF
 )
     info "Clash.meta 配置 (IPv6) / Clash.meta config (IPv6):"
     display_result "${ipv6_clash}"
-    echo "$ipv6_clash" >> "$URL_FILE"
+    echo "$ipv6_clash" >> "${share_output_file:-$URL_FILE}"
+}
+
+output_default_shadowsocks() {
+    [[ -n "$ss_inbound_json" ]] || return 0
+    local userinfo="" share_url="" clash_config=""
+    userinfo="$(printf '%s:%s' "$SHADOWSOCKS_METHOD" "$ss_password" | base64 | tr -d '\n')"
+    share_url="ss://${userinfo}@[${ss_listen}]:${ss_port}#${current_hostname}-shadowsocks-ipv6"
+    clash_config=$(cat <<-EOF
+- name: ${current_hostname}-shadowsocks-ipv6
+  type: ss
+  server: ${ss_listen}
+  port: ${ss_port}
+  cipher: ${SHADOWSOCKS_METHOD}
+  password: ${ss_password}
+  udp: true
+EOF
+    )
+    info "Shadowsocks 2022 (IPv6) / Shadowsocks 2022 (IPv6):"
+    display_result "$share_url"
+    display_result "$clash_config"
+    printf '%s\n%s\n' "$share_url" "$clash_config" >> "${share_output_file:-$URL_FILE}"
 }
 
 output_results() {
@@ -2783,6 +2883,7 @@ output_results() {
     generate_share_links
     generate_clash_config
     generate_ipv6_variants
+    output_default_shadowsocks
     if [[ "$addsocks_mode" -eq 1 ]]; then
         output_socks_proxy
     fi
@@ -2798,6 +2899,9 @@ main() {
     local xray_active=0
     local route_status=0
     parse_args "$@" || return 1
+    if [[ "$xray_config_path" == "$NOKEY_CONFIG_FILE" && ! -f "$xray_config_path" && -f "${NOKEY_CONFIG_DIR}/nokey.json" ]]; then
+        xray_config_path="${NOKEY_CONFIG_DIR}/nokey.json"
+    fi
     if [[ "$keepconfig" -eq 1 || "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 || "$addsocks_mode" -eq 1 || "$default_route_mode" -eq 1 ]]; then
         if [[ ! -f "$xray_config_path" && -f /usr/local/etc/xray/config.json ]]; then
             xray_config_path=/usr/local/etc/xray/config.json
@@ -2831,10 +2935,10 @@ main() {
         return 0
     fi
     check_root || return 1
-    if [[ "$default_route_mode" -eq 1 && -f "$xray_config_path" ]]; then
-        init_output_files preserve-shares || return 1
-    else
-        init_output_files || return 1
+    init_output_files preserve-shares || return 1
+    if [[ "$remove_mode" -ne 1 && "$realm_only" -ne 1 &&
+          ! ( "$default_route_mode" -eq 1 && -f "$xray_config_path" ) ]]; then
+        begin_share_output || return 1
     fi
     show_banner
     log_info "event=run_version version=$SCRIPT_VERSION"
@@ -2849,6 +2953,7 @@ main() {
     if [[ "$add_limiter_mode" -eq 1 || "$change_sni_mode" -eq 1 ]]; then
         install_dependencies jq || return 1
         patch_existing_xray_config || return 1
+        commit_share_output || return 1
         info "补丁完成 / Patch complete."
         return 0
     fi
@@ -2861,6 +2966,7 @@ main() {
         if [[ "$xray_active" -eq 1 || -f "$xray_config_path" ]]; then
             install_dependencies jq || return 1
             patch_existing_xray_config || return 1
+            commit_share_output || return 1
             info "SOCKS5入站添加完成 / SOCKS5 inbound added."
             return 0
         fi
@@ -2872,7 +2978,8 @@ main() {
         info "卸载完成 / Uninstallation complete."
         return 0
     fi
-    if [[ "$keepconfig" -eq 1 ]]; then install_dependencies jq || return 1; else install_dependencies || return 1; fi
+    if [[ "$keepconfig" -eq 1 ]]; then install_dependencies jq || return 1; else install_dependencies ip || return 1; fi
+    case "$xray_config_path" in *.yaml|*.yml) require_xray_yaml_tool || return 1 ;; esac
     detect_network_interfaces
     if [[ "$realm_only" -ne 1 ]]; then
         if [[ "$keepconfig" -ne 1 && -z "$egress_ipv4_available" ]]; then
@@ -2891,6 +2998,7 @@ main() {
         restart_realm_service || return 1
     fi
     output_results || return 1
+    if [[ -n "$share_output_file" ]]; then commit_share_output || return 1; fi
     info "总用时 / Elapsed: ${SECONDS}s"
     log_info "event=run_complete duration_s=$SECONDS"
 }

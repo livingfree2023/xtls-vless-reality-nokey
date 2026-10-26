@@ -58,12 +58,12 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 ```
 
 > **Note**:
-> 1. The service is managed as `nokey.service` (OpenRC: `nokey`) with configuration stored at `/usr/local/etc/nokey/nokey.json`, avoiding collisions with existing official Xray services or control panels (e.g., 3x-ui).
+> 1. The service is managed as `nokey.service` (OpenRC: `nokey`) with new configurations stored at `/usr/local/etc/nokey/nokey.yaml`, avoiding collisions with existing official Xray services or control panels (e.g., 3x-ui). The installer automatically supplies the verified YAML tool when needed; existing JSON installs retain their format.
 > 2. Installing to `/usr/local/bin/nokey` as shown above ensures full flag compatibility across all shells (Bash, Zsh, Ash/Sh, Fish).
 
 ## Feature menu and standalone scripts
 
-Running `nokey` without parameters keeps the original behavior: Xray VLESS + Reality, BBR, and FQ setup.
+Running `nokey` without parameters installs Xray VLESS + Reality, BBR, and FQ. If the VPS has a local global IPv6 address, the same Xray config also gets a Shadowsocks 2022 inbound bound to that address. Menu option 1 does the same.
 
 ```bash
 nokey --menu
@@ -83,6 +83,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 ```
 
 Each entrypoint loads `nokey-common.sh`; JSON-based features install `jq` through the detected package manager when it is missing.
+
+NoKey installs its verified `yq` at `/usr/local/libexec/nokey/yq` and adds that directory to existing `~/.bashrc` and `~/.zshrc` files. Open a new shell, or source the relevant rc file, to use `yq` as a command.
+
+Existing installations keep running after the code is updated. Running with `--keepconfig` preserves an existing JSON configuration and credentials. A normal reinstall on an existing NoKey JSON installation keeps its JSON file path and format, but generates new credentials; update clients with the new share links after reinstalling.
 
 The acme.sh menu entry uses Cloudflare DNS validation when a token is entered, otherwise it uses standalone HTTP-01 on port 80. Hysteria2 chooses a random free port above 10000 by default (`--port` overrides it). Providing `HYSTERIA_CF_TOKEN` or entering a token uses Hysteria's built-in ACME DNS challenge; otherwise it detects certificates under `/etc/hysteria/` and `~/.acme.sh/`, then asks for certificate and key paths if needed. After the service is active, `nokey.url` contains a `hysteria2://` share URL and a Mihomo/Clash YAML proxy entry, followed by systemd/OpenRC restart and status commands.
 
@@ -104,8 +108,6 @@ nokey --default-route=6
 ```
 
 `--netstack=4|6` chooses the server address clients connect to. `--default-route` chooses Xray's preferred address family when connecting to destination websites. Dual-stack DNS retains both A and AAAA queries. Existing configuration is backed up and validated before the selection is applied.
-
-Sing-box installation has been removed. The old `--singbox` and `--singbox-only` options fail before making system changes. Updating the script does not automatically uninstall an existing Sing-box service.
 
 ---
 
