@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.36"
+readonly SCRIPT_VERSION="2026.37"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -73,6 +73,10 @@ socks_port=""
 socks_username=""
 socks_password=""
 socks_inbound_json=""
+ss_listen=""
+ss_port=""
+ss_password=""
+ss_inbound_json=""
 random_unused_port=""
 arg_port_set=0
 arg_domain_set=0
@@ -589,6 +593,10 @@ install_dependencies() {
                     ;;
                 lsof)
                     package_name="lsof"
+                    ;;
+                ip)
+                    package_name="iproute2"
+                    [[ "$manager" == yum || "$manager" == dnf ]] && package_name="iproute"
                     ;;
             esac
             run_logged dependency_install eval "$install_cmd" "$package_name" || { task_fail; return 1; }
@@ -1331,7 +1339,7 @@ show_feature_menu() {
         display_result "6) Enable BBR"
         display_result "7) Get SSL certificate with acme.sh"
         display_result "8) Install Hysteria2 server"
-        display_result "9) Add IPv6 Xray Shadowsocks 2022"
+        display_result "9) Add IPv6 Shadowsocks to existing Xray"
         display_result "0) 退出 / Exit"
         read -r -p "Select an option: " choice <&3 || break
         case "$choice" in
@@ -1613,6 +1621,39 @@ generate_crypto() {
     fi
 }
 
+prepare_default_shadowsocks_inbound() {
+    local addresses=""
+    ss_inbound_json=""
+    ss_listen=""
+    ss_port=""
+    ss_password=""
+    addresses="$(local_global_ipv6_addresses)" || return 1
+    if [[ -z "$addresses" ]]; then
+        log_info "event=shadowsocks_skip reason=no_local_global_ipv6"
+        return 0
+    fi
+    ss_listen="${addresses%%$'\n'*}"
+    select_shadowsocks_ipv6 || return 1
+    select_random_unused_port "" "$port" "$socks_port" || return 1
+    ss_port="$random_unused_port"
+    generate_shadowsocks_password || return 1
+    ss_inbound_json=$(cat <<-EOF
+{
+  "tag": "${SHADOWSOCKS_TAG}",
+  "listen": "${ss_listen}",
+  "port": ${ss_port},
+  "protocol": "shadowsocks",
+  "settings": {
+    "network": "tcp,udp",
+    "method": "${SHADOWSOCKS_METHOD}",
+    "password": "${ss_password}"
+  }
+}
+EOF
+    )
+    log_info "event=shadowsocks_prepared family=ipv6 port=$ss_port"
+}
+
 build_xray_config() {
     build_default_route_settings || return 1
     # info "网络栈netstack = ${cyan}${netstack}${none}"
@@ -1699,15 +1740,15 @@ EOF
     if [[ "$mldsa_enabled" -eq 1 ]]; then
         reality_template="$(printf '%s\n' "$reality_template" | sed '/privateKey:/a\        mldsa65Seed: "'"$mldsa65Seed"'"')"
     fi
-    if [[ -n "$socks_inbound_json" ]]; then
+    local inbound_json="" inbound_yaml="" inbound_entry=""
+    for inbound_json in "$socks_inbound_json" "$ss_inbound_json"; do
+        [[ -n "$inbound_json" ]] || continue
         require_xray_yaml_tool || return 1
-        local socks_yaml=""
-        socks_yaml="$(printf '%s\n' "$socks_inbound_json" | "$xray_yaml_tool_path" -p=json -o=yaml '.' -)" || return 1
-        local socks_entry=""
-        socks_entry="$(printf '%s\n' "$socks_yaml" | sed '1s/^/  - /; 2,$s/^/    /')"
-        reality_template="${reality_template/outbounds:/$socks_entry
+        inbound_yaml="$(printf '%s\n' "$inbound_json" | "$xray_yaml_tool_path" -p=json -o=yaml '.' -)" || return 1
+        inbound_entry="$(printf '%s\n' "$inbound_yaml" | sed '1s/^/  - /; 2,$s/^/    /')"
+        reality_template="${reality_template/outbounds:/$inbound_entry
 outbounds:}"
-    fi
+    done
     local config_path="$xray_config_path"
     local config_dir=""
     task_start "快好了，手搓 / Configuring $config_path"
@@ -1998,6 +2039,7 @@ configure_xray() {
         fi
         initialize_variables
         generate_crypto
+        prepare_default_shadowsocks_inbound || return 1
         if [[ "$addsocks_mode" -eq 1 ]]; then
             task_start "生成SOCKS5入站 / Generate SOCKS5 inbound"
             prepare_socks_inbound || { task_fail; return 1; }
@@ -2162,6 +2204,7 @@ is_tcp_port_unused() {
 select_random_unused_port() {
     local config_source="${1:-}"
     local excluded_port="${2:-}"
+    local second_excluded_port="${3:-}"
     local candidate=""
     local attempt=0
 
@@ -2170,6 +2213,7 @@ select_random_unused_port() {
         candidate=$((10000 + (RANDOM * 32768 + RANDOM) % 50001))
         attempt=$((attempt + 1))
         [[ -n "$excluded_port" && "$candidate" == "$excluded_port" ]] && continue
+        [[ -n "$second_excluded_port" && "$candidate" == "$second_excluded_port" ]] && continue
         if [[ -n "$config_source" ]] && jq -e --argjson port "$candidate" '.inbounds[]? | select(.port == $port)' "$config_source" >/dev/null 2>&1; then
             continue
         fi
@@ -2197,7 +2241,7 @@ prepare_socks_inbound() {
     fi
 
     # Avoid both existing config ports and currently listening sockets.
-    if ! select_random_unused_port "$config_source" "${port:-}"; then
+    if ! select_random_unused_port "$config_source" "${port:-}" "${ss_port:-}"; then
         error "没有找到可用的SOCKS端口 / Could not find an unused SOCKS port."
         return 1
     fi
@@ -2613,6 +2657,16 @@ dry_run_preview() {
 
     info "检测到系统 / Detected OS: ${os_family} | 架构 / Architecture: ${arch_name}"
 
+    if [[ "$keepconfig" -ne 1 ]]; then
+        local preview_ipv6=""
+        preview_ipv6="$(local_global_ipv6_addresses 2>/dev/null | head -n 1)" || true
+        if [[ -n "$preview_ipv6" ]]; then
+            info "将添加Shadowsocks 2022 IPv6入站 / Would add Shadowsocks 2022 inbound on ${preview_ipv6}"
+        else
+            info "未找到本机全局IPv6地址，仅生成Reality入站 / No local global IPv6; Reality inbound only"
+        fi
+    fi
+
     info "将创建目录 / Would create directories:"
     info "  /usr/local/bin"
     info "  /usr/local/share/xray"
@@ -2766,6 +2820,27 @@ EOF
     echo "$ipv6_clash" >> "$URL_FILE"
 }
 
+output_default_shadowsocks() {
+    [[ -n "$ss_inbound_json" ]] || return 0
+    local userinfo="" share_url="" clash_config=""
+    userinfo="$(printf '%s:%s' "$SHADOWSOCKS_METHOD" "$ss_password" | base64 | tr -d '\n')"
+    share_url="ss://${userinfo}@[${ss_listen}]:${ss_port}#${current_hostname}-shadowsocks-ipv6"
+    clash_config=$(cat <<-EOF
+- name: ${current_hostname}-shadowsocks-ipv6
+  type: ss
+  server: ${ss_listen}
+  port: ${ss_port}
+  cipher: ${SHADOWSOCKS_METHOD}
+  password: ${ss_password}
+  udp: true
+EOF
+    )
+    info "Shadowsocks 2022 (IPv6) / Shadowsocks 2022 (IPv6):"
+    display_result "$share_url"
+    display_result "$clash_config"
+    printf '%s\n%s\n' "$share_url" "$clash_config" >> "$URL_FILE"
+}
+
 output_results() {
     # Chrome offers the ML-KEM key share required by current REALITY servers.
     fingerprint="chrome"
@@ -2782,6 +2857,7 @@ output_results() {
     generate_share_links
     generate_clash_config
     generate_ipv6_variants
+    output_default_shadowsocks
     if [[ "$addsocks_mode" -eq 1 ]]; then
         output_socks_proxy
     fi
@@ -2863,7 +2939,7 @@ main() {
         if [[ "$xray_active" -eq 1 || -f "$xray_config_path" ]]; then
             install_dependencies jq || return 1
             patch_existing_xray_config || return 1
-            info "SOCKS5入站添加完成 / SOCKS5 inbound added."
+                info "SOCKS5入站添加完成 / SOCKS5 inbound added."
             return 0
         fi
     fi
@@ -2874,7 +2950,7 @@ main() {
         info "卸载完成 / Uninstallation complete."
         return 0
     fi
-    if [[ "$keepconfig" -eq 1 ]]; then install_dependencies jq || return 1; else install_dependencies || return 1; fi
+    if [[ "$keepconfig" -eq 1 ]]; then install_dependencies jq || return 1; else install_dependencies ip || return 1; fi
     case "$xray_config_path" in *.yaml|*.yml) require_xray_yaml_tool || return 1 ;; esac
     detect_network_interfaces
     if [[ "$realm_only" -ne 1 ]]; then

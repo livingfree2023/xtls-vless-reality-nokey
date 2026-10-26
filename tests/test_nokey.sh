@@ -863,6 +863,81 @@ else
   pass "fresh SOCKS config test skipped (jq or yq unavailable)"
 fi
 
+# A link-local or private IPv6 address must not enable the public listener.
+if (
+  ip() { printf '%s\n' 'inet6 fd00::1/64 scope global' 'inet6 fe80::1/64 scope link' 'inet6 2001:db8::10/64 scope global'; }
+  [[ "$(local_global_ipv6_addresses)" == '2001:db8::10' ]]
+); then
+  pass "public local IPv6 detection excludes ULA and link-local"
+else
+  fail "IPv6 detection should choose only global addresses"
+fi
+
+# Test 41b: existing file logs are migrated to systemd journal output
+if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
+  ss_build_dir="$(mktemp -d)"
+  if (
+    cd "$ss_build_dir" || exit 1
+    xray_config_path="$ss_build_dir/nokey.yaml"
+    port=443
+    domain="example.com"
+    reality_dest_port=443
+    uuid="test-uuid"
+    private_key="test-private-key"
+    shortid="abcd1234"
+    mldsa_enabled=0
+    mldsa65Seed=""
+    socks_port=""
+    socks_inbound_json=""
+    egress_ipv4_available=1
+    egress_ipv6_available=1
+    default_route_choice=4
+    local_global_ipv6_addresses() { printf '%s\n' '2001:db8::10'; }
+    is_tcp_port_unused() { return 0; }
+    prepare_default_shadowsocks_inbound
+    [[ "$ss_port" != "$port" && "$ss_listen" == '2001:db8::10' ]]
+    [[ "$(printf '%s' "$ss_password" | base64 -d | wc -c | tr -d ' ')" -eq 16 ]]
+    build_xray_config >/dev/null
+    yq -o=json '.' "$pending_xray_config" > "$ss_build_dir/output.json"
+    jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks" and .[1].listen == "2001:db8::10" and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' "$ss_build_dir/output.json" >/dev/null
+    output_default_shadowsocks >/dev/null
+    grep -q 'ss://.*@\[2001:db8::10\]' "$URL_FILE"
+  ); then
+    pass "fresh Reality config adds IPv6 Shadowsocks inbound"
+  else
+    fail "IPv6 fresh config should contain Reality and Shadowsocks"
+  fi
+  rm -rf "$ss_build_dir"
+
+  no_ipv6_dir="$(mktemp -d)"
+  if (
+    cd "$no_ipv6_dir" || exit 1
+    xray_config_path="$no_ipv6_dir/nokey.yaml"
+    port=443
+    domain="example.com"
+    reality_dest_port=443
+    uuid="test-uuid"
+    private_key="test-private-key"
+    shortid="abcd1234"
+    mldsa_enabled=0
+    mldsa65Seed=""
+    socks_inbound_json=""
+    egress_ipv4_available=1
+    egress_ipv6_available=0
+    default_route_choice=4
+    local_global_ipv6_addresses() { :; }
+    prepare_default_shadowsocks_inbound
+    [[ -z "$ss_inbound_json" ]]
+    build_xray_config >/dev/null
+    yq -o=json '.' "$pending_xray_config" | jq -e '.inbounds | length == 1 and .[0].protocol == "vless"' >/dev/null
+  ); then
+    pass "fresh Reality config remains single-inbound without IPv6"
+  else
+    fail "no-IPv6 fresh config should contain only Reality"
+  fi
+  rm -rf "$no_ipv6_dir"
+fi
+
 # Test 41b: existing file logs are migrated to systemd journal output
 if command -v jq >/dev/null 2>&1; then
   journald_config_dir="$(mktemp -d)"

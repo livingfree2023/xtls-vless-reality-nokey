@@ -1,9 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2034,SC2154
 
-readonly SHADOWSOCKS_METHOD="2022-blake3-aes-128-gcm"
-readonly SHADOWSOCKS_TAG="nokey-shadowsocks-ipv6"
-
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${script_dir}/nokey.sh" ]]; then
     # shellcheck source=nokey.sh
@@ -37,25 +34,6 @@ parse_shadowsocks_args() {
     done
 }
 
-local_global_ipv6_addresses() {
-    command -v ip >/dev/null 2>&1 || return 1
-    ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {split($2, address, "/"); print address[1]}'
-}
-
-select_shadowsocks_ipv6() {
-    local addresses=""
-    addresses="$(local_global_ipv6_addresses)" || {
-        error "Cannot inspect local IPv6 addresses; install iproute2"
-        return 1
-    }
-    [[ -n "$ss_listen" ]] || ss_listen="${addresses%%$'\n'*}"
-    if [[ -z "$ss_listen" || "$ss_listen" != *:* || "$ss_listen" == *%* ]] ||
-       ! printf '%s\n' "$addresses" | awk -v target="$ss_listen" '$0 == target {found=1} END {exit !found}'; then
-        error "A local global IPv6 address is required / 需要本机全局IPv6地址"
-        return 1
-    fi
-}
-
 select_shadowsocks_port() {
     local existing=""
     if [[ -n "$ss_port" ]]; then
@@ -72,11 +50,6 @@ select_shadowsocks_port() {
         select_random_unused_port "$patch_jq_source" || return 1
         ss_port="$random_unused_port"
     fi
-}
-
-generate_shadowsocks_password() {
-    ss_password="$(head -c 16 /dev/urandom | base64 | tr -d '\n')"
-    [[ -n "$ss_password" ]]
 }
 
 build_shadowsocks_config() {

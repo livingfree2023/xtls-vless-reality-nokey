@@ -16,7 +16,7 @@
 
 实测可在 Alpine Pod（64MB RAM）环境跑起来，适合超低内存场景。
 
-默认不带参数直接从新机器开始到装完BBR+FQ，魔改功能为
+默认不带参数直接从新机器开始安装 Xray VLESS Reality；检测到本机全局 IPv6 地址时，还会在同一 Xray 配置中自动加入 Shadowsocks 2022 入站。魔改功能为
 1. 自动跳过不必要的系统环境更新
 2. 自动跳过不必要的geodata更新（--force参数可强制更新）
 3. 按照官方命令生成UUID/KeyPair
@@ -32,7 +32,7 @@
 13. 自动探测可用的REALITY目标SNI（参考3x-ui的REALITY Target Scanner，验证TLS 1.3 + HTTP/2）
 14. 支持`--addsocks`为Xray添加带随机端口、用户名和密码的SOCKS5入站
 15. Xray REALITY配置使用`minClientVer: "0.0.0"`兼容旧版客户端
-16. 使用`--menu`选择Realm、SOCKS、WARP、BBR、acme.sh证书和Hysteria2
+16. 使用`--menu`选择Realm、SOCKS、Shadowsocks、WARP、BBR、acme.sh证书和Hysteria2
 17. 缺少`jq`时，SOCKS和WARP功能会通过系统包管理器自动安装
 18. `--default-route` 用菜单选择双栈VPS的 IPv4 / IPv6 出口偏好
 
@@ -76,7 +76,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 
 这些脚本会自动加载`nokey-common.sh`。需要JSON配置处理的功能会先检查并安装`jq`。
 
-菜单选项 9 在现有 Xray 配置中添加 Shadowsocks 2022 入站，使用 `2022-blake3-aes-128-gcm`，仅监听本机全局 IPv6 地址。可用 `--listen=IPv6地址`、`--port=端口` 指定地址和端口。配置经 Xray 校验并成功重启后输出 `ss://` 链接。
+默认安装与菜单选项 1 行为相同：有本机全局 IPv6 时，Reality 与 Shadowsocks 2022 自动作为两个入站写入同一 Xray 配置；无 IPv6 时仅安装 Reality。菜单选项 9 可在已有 Xray 配置上单独添加 Shadowsocks 入站，使用 `2022-blake3-aes-128-gcm`，仅监听本机全局 IPv6 地址。可用 `--listen=IPv6地址`、`--port=端口` 指定地址和端口。配置经 Xray 校验并成功重启后输出 `ss://` 链接。
 
 菜单中的acme.sh功能使用Cloudflare DNS验证（输入API token时）或80端口HTTP验证，并把证书安装到`/etc/hysteria/`。Hysteria2默认选择10000以上的随机空闲端口（可用`--port`指定），如果提供Cloudflare token，会优先使用内置ACME DNS验证；否则检测该目录和`~/.acme.sh/`中的证书，找不到时提示输入证书和私钥路径。服务启动成功后，`nokey.url`会保存链接和Mihomo/Clash YAML配置，并输出systemd/OpenRC重启和状态检查命令。
 

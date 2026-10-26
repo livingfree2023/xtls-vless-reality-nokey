@@ -7,6 +7,8 @@ fi
 if [[ -z "${URL_FILE:-}" ]]; then
     readonly URL_FILE="nokey.url"
 fi
+readonly SHADOWSOCKS_METHOD="2022-blake3-aes-128-gcm"
+readonly SHADOWSOCKS_TAG="nokey-shadowsocks-ipv6"
 if [[ -t 1 ]]; then
     readonly red=$'\033[91m'
     readonly green=$'\033[92m'
@@ -639,6 +641,10 @@ install_dependencies() {
                 lsof)
                     package_name="lsof"
                     ;;
+                ip)
+                    package_name="iproute2"
+                    [[ "$manager" == yum || "$manager" == dnf ]] && package_name="iproute"
+                    ;;
             esac
             eval "$install_cmd" "$package_name"  >> "$LOG_FILE" 2>&1
             if ! command -v "$tool" > /dev/null 2>&1; then
@@ -750,6 +756,30 @@ is_port_reusable() {
 random_hex() {
     local byte_count="$1"
     od -An -N "$byte_count" -tx1 /dev/urandom | tr -d '[:space:]'
+}
+
+local_global_ipv6_addresses() {
+    command -v ip >/dev/null 2>&1 || return 1
+    ip -6 addr show 2>/dev/null | awk '/inet6 / && /scope[ :]global/ {split($2, address, "/"); if (address[1] !~ /^(fc|fd|fe[89ab]|ff)/ && address[1] != "::" && address[1] != "::1") print address[1]}'
+}
+
+select_shadowsocks_ipv6() {
+    local addresses=""
+    addresses="$(local_global_ipv6_addresses)" || {
+        error "Cannot inspect local IPv6 addresses; install iproute2"
+        return 1
+    }
+    [[ -n "$ss_listen" ]] || ss_listen="${addresses%%$'\n'*}"
+    if [[ -z "$ss_listen" || "$ss_listen" != *:* || "$ss_listen" == *%* ]] ||
+       ! printf '%s\n' "$addresses" | awk -v target="$ss_listen" '$0 == target {found=1} END {exit !found}'; then
+        error "A local global IPv6 address is required / 需要本机全局IPv6地址"
+        return 1
+    fi
+}
+
+generate_shadowsocks_password() {
+    ss_password="$(head -c 16 /dev/urandom | base64 | tr -d '\n')"
+    [[ -n "$ss_password" ]]
 }
 
 is_tcp_port_unused() {

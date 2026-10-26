@@ -29,7 +29,7 @@
 8. نمایش راهنما با `--help`  
 9. فقط مراحل ساده را نشان می‌دهد—لاگ کامل در فایل ذخیره می‌شود  
 10. تولید QR کد
-11. گزینه `--menu` برای انتخاب Realm، SOCKS، WARP، BBR، گواهی acme.sh و Hysteria2
+11. گزینه `--menu` برای انتخاب Realm، SOCKS، Shadowsocks، WARP، BBR، گواهی acme.sh و Hysteria2
 12. هر قابلیت به‌صورت اسکریپت مستقل نیز قابل اجراست
 13. انتخاب خودکار SNI هدف REALITY مناسب (الهام‌گرفته از REALITY Target Scanner پروژه 3x-ui؛ بررسی TLS 1.3 و HTTP/2)
 14. در صورت نبودن `jq`، قابلیت‌های JSONمحور آن را خودکار نصب می‌کنند
@@ -62,7 +62,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 
 ## منوی قابلیت‌ها و اسکریپت‌های مستقل
 
-اجرای `nokey` بدون پارامتر رفتار قبلی را حفظ می‌کند و Xray VLESS Reality به‌همراه BBR و FQ را نصب می‌کند.
+اجرای `nokey` بدون پارامتر Xray VLESS Reality را به‌همراه BBR و FQ نصب می‌کند. اگر VPS آدرس IPv6 عمومی محلی داشته باشد، یک ورودی Shadowsocks 2022 نیز در همان پیکربندی Xray اضافه می‌شود. گزینهٔ ۱ منو همین رفتار را دارد؛ گزینهٔ ۹ Shadowsocks را به پیکربندی Xray موجود اضافه می‌کند.
 
 ```bash
 nokey --menu

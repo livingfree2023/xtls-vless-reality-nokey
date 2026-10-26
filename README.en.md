@@ -29,7 +29,7 @@ Run a single command, sit back, and wait. No chatter, no fuss—super fast. Read
 8. Shows help with `--help`  
 9. Outputs only minimal steps—detailed logs saved to a file  
 10. Generates QR codes  
-11. `--menu` opens the Realm, SOCKS, WARP, BBR, acme.sh certificate, and Hysteria2 feature menu
+11. `--menu` opens the Realm, SOCKS, Shadowsocks, WARP, BBR, acme.sh certificate, and Hysteria2 feature menu
 12. Feature implementations are separate scripts and can be run with one-liners
 13. Auto-probes a feasible REALITY target SNI (mirrors 3x-ui's REALITY Target Scanner; verifies TLS 1.3 + HTTP/2)
 14. Installs `jq` automatically before JSON-based SOCKS/WARP operations when missing
@@ -63,7 +63,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 
 ## Feature menu and standalone scripts
 
-Running `nokey` without parameters keeps the original behavior: Xray VLESS + Reality, BBR, and FQ setup.
+Running `nokey` without parameters installs Xray VLESS + Reality, BBR, and FQ. If the VPS has a local global IPv6 address, the same Xray config also gets a Shadowsocks 2022 inbound bound to that address. Menu option 1 does the same; option 9 adds Shadowsocks to an existing Xray config.
 
 ```bash
 nokey --menu

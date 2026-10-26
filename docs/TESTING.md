@@ -3,8 +3,8 @@
 Run from the repository root. The offline suites source the installer and isolate configuration operations using temporary fixtures. They never invoke the actual installation flow. Fixture credentials are deliberately synthetic and never used by production code.
 
 ```bash
-for script in nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh; do bash -n "$script"; done
-shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh
+for script in nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-shadowsocks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh; do bash -n "$script"; done
+shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-shadowsocks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh
 bash tests/test_nokey.sh
 bash tests/test_features.sh
 bash tests/test_logging.sh
@@ -16,6 +16,7 @@ bash tests/test_default_route.sh
 - Unit: argument/family mappings, preferred DNS order, existing configuration preservation and legacy Freedom resolution normalization.
 - Module: secure/redacted logs, legacy history migration, nested progress output, command failure and signal cleanup, removed flag handling, validation rejection and failed-restart rollback.
 - YAML trial: the NoKey suite verifies a fresh YAML template and a YAML patch round trip when `yq` is available. The feature suite tests automatic binary installation, checksum rejection and temporary-file cleanup without network or system writes.
+- IPv6 Shadowsocks: the NoKey suite checks local address filtering, a two-inbound fresh config, a Reality-only config without IPv6, and the generated share URL. The feature suite checks standalone Xray config patching.
 - Terminal: local Python 3 PTY probes verify nested colors, cancellation and unavailable choices; these probes explicitly skip when Python is absent.
 - Integration: real Xray parses full generated REALITY templates with disposable keys, then serves a localhost-only SOCKS proxy that makes real HTTPS requests. Both preferences are tested with dual-stack, A-only and AAAA-only targets. Controlled unreachable addresses test actual TCP failover. Output reports only address family, never the actual public address.
 
