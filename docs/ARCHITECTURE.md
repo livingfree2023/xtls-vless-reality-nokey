@@ -2,7 +2,7 @@
 
 `nokey.sh` owns Xray installation, REALITY template generation and focused configuration patches. Feature entrypoints cover Realm, SOCKS, WARP, BBR, ACME and Hysteria2. Shared terminal/logging functions live in `nokey-common.sh`; machine-readable helper stdout must remain free of UI messages.
 
-Fresh Reality installs also include an IPv6-bound Shadowsocks 2022 inbound when a local global IPv6 address exists. Both inbounds use the same Xray service and staged validation/rollback path. Without that address, the generated config contains only the Reality inbound (plus any explicitly requested SOCKS inbound).
+Fresh Reality installs always include a wildcard Shadowsocks 2022 TCP/UDP inbound. Both inbounds use the same Xray service and staged validation/rollback path. SS sharing uses detected public IPv4/IPv6 endpoints rather than local interface addresses and prints a red relay-use warning. NAT ingress still depends on upstream mapping.
 
 ## Configuration flow
 

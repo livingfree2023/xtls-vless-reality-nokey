@@ -1,12 +1,22 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><title>NoKey Xray inbound prototype</title><style>body{font:16px system-ui;background:#10151c;color:#e8edf3;max-width:720px;margin:5rem auto;padding:1rem}pre{background:#1a2430;padding:2rem;border-radius:12px;line-height:1.7}</style><h1>Reality with IPv6 Shadowsocks</h1><pre>./nokey.sh  or  menu option 1
+<!doctype html><html lang="zh"><meta charset="utf-8"><title>NoKey SS 输出示例</title><style>body{font:16px monospace;background:#10151c;color:#e8edf3;max-width:760px;margin:4rem auto;padding:1rem}pre{line-height:1.7;white-space:pre-wrap}.warning{color:#ff5555}</style><h1>Reality 与 Shadowsocks 2022</h1><pre>默认安装或菜单选项 1：同时生成 Reality 和 SS 入站。
+服务校验并启动后，按检测到的公网地址输出：</pre><p class="warning">SS 连接不可过GFW！只能做为中转落地使用</p><pre>Shadowsocks 2022 (IPv4):
+ss://[密钥]@192.0.2.10:PORT#host-shadowsocks-ipv4
+- name: host-shadowsocks-ipv4
+  type: ss
+  server: 192.0.2.10
+  port: PORT
+  cipher: 2022-blake3-aes-128-gcm
+  password: [密钥]
+  udp: true
 
-Detected local IPv6: 2001:db8::10
-Xray inbounds:
-  VLESS Reality     TCP :443
-  Shadowsocks 2022  TCP + UDP [2001:db8::10]:PORT
+Shadowsocks 2022 (IPv6):
+ss://[密钥]@[2001:db8::10]:PORT#host-shadowsocks-ipv6
+- name: host-shadowsocks-ipv6
+  type: ss
+  server: 2001:db8::10
+  port: PORT
+  cipher: 2022-blake3-aes-128-gcm
+  password: [密钥]
+  udp: true
 
-After validation and Xray restart:
-vless://…
-ss://…@[2001:db8::10]:PORT#host-shadowsocks-ipv6
-
-On an IPv4-only VPS, only the Reality inbound is created.</pre></html>
+单栈环境只输出已检测到的地址。</pre></html>

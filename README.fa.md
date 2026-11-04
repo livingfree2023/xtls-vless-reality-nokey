@@ -62,7 +62,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 
 ## منوی قابلیت‌ها و اسکریپت‌های مستقل
 
-اجرای `nokey` بدون پارامتر Xray VLESS Reality را به‌همراه BBR و FQ نصب می‌کند. اگر VPS آدرس IPv6 عمومی محلی داشته باشد، یک ورودی Shadowsocks 2022 نیز در همان پیکربندی Xray اضافه می‌شود. گزینهٔ ۱ منو همین رفتار را دارد.
+اجرای `nokey` بدون پارامتر Xray VLESS Reality را به‌همراه BBR و FQ نصب می‌کند. یک ورودی Shadowsocks 2022 روی همهٔ رابط‌ها نیز در همان پیکربندی Xray اضافه می‌شود و پیوندها و تنظیمات Clash برای IPv4 و IPv6 عمومی شناسایی‌شده نمایش داده می‌شوند. گزینهٔ ۱ منو همین رفتار را دارد.
 
 ```bash
 nokey --menu

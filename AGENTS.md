@@ -3,8 +3,8 @@
 ## What this project is
 
 Several one-shot Bash entrypoints sharing `nokey-common.sh`. `nokey.sh` installs
-Xray VLESS + Reality + BBR by default and adds an IPv6-bound Shadowsocks 2022
-inbound when a local global IPv6 address exists; Realm, SOCKS, WARP,
+Xray VLESS + Reality + BBR by default and always adds a wildcard Shadowsocks 2022
+inbound on fresh installs; Realm, SOCKS, WARP,
 standalone BBR, ACME certificates, and Hysteria2 are separate
 feature entrypoints. All run from `curl | bash` or process substitution and
 must work on minimal environments
@@ -17,7 +17,7 @@ Fedora, AlmaLinux.
 - `docs/TESTING.md`: unit, module, terminal and opt-in real network verification.
 - `specs/2026-10-25-output-logs-default-route/`: current feature contract and handover.
 - `specs/2026-10-25-xray-yaml-trial/`: experimental YAML config path and verification.
-- `specs/2026-10-26-xray-shadowsocks-ipv6/`: automatic Xray Shadowsocks inbound contract.
+- `specs/2026-11-04-shadowsocks-dual-stack/`: automatic SS inbound and public IPv4/IPv6 sharing contract.
 - `specs/2026-10-26-addsocks-yaml-fresh/`: YAML-only `--addsocks` dispatch and legacy JSON archive.
 
 ## Non-negotiables

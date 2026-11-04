@@ -63,7 +63,7 @@ curl -fsSL -o /usr/local/bin/nokey https://raw.githubusercontent.com/livingfree2
 
 ## Feature menu and standalone scripts
 
-Running `nokey` without parameters installs Xray VLESS + Reality, BBR, and FQ. If the VPS has a local global IPv6 address, the same Xray config also gets a Shadowsocks 2022 inbound bound to that address. Menu option 1 does the same.
+Running `nokey` without parameters installs Xray VLESS + Reality, BBR, and FQ. The same Xray config always includes a wildcard Shadowsocks 2022 inbound, with URLs and Clash entries for each detected public IPv4/IPv6 address. SS is intended for relay egress use; the output shows a red warning against using it directly across the GFW. Menu option 1 does the same.
 
 ```bash
 nokey --menu

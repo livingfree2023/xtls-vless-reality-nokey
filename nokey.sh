@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.41"
+readonly SCRIPT_VERSION="2026.42"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -90,7 +90,6 @@ socks_port=""
 socks_username=""
 socks_password=""
 socks_inbound_json=""
-ss_listen=""
 ss_port=""
 ss_password=""
 ss_inbound_json=""
@@ -1633,25 +1632,15 @@ generate_crypto() {
 }
 
 prepare_default_shadowsocks_inbound() {
-    local addresses=""
     ss_inbound_json=""
-    ss_listen=""
     ss_port=""
     ss_password=""
-    addresses="$(local_global_ipv6_addresses)" || return 1
-    if [[ -z "$addresses" ]]; then
-        log_info "event=shadowsocks_skip reason=no_local_global_ipv6"
-        return 0
-    fi
-    ss_listen="${addresses%%$'\n'*}"
-    select_shadowsocks_ipv6 || return 1
     select_random_unused_port "" "$port" "$socks_port" || return 1
     ss_port="$random_unused_port"
     generate_shadowsocks_password || return 1
     ss_inbound_json=$(cat <<-EOF
 {
   "tag": "${SHADOWSOCKS_TAG}",
-  "listen": "${ss_listen}",
   "port": ${ss_port},
   "protocol": "shadowsocks",
   "settings": {
@@ -1662,7 +1651,7 @@ prepare_default_shadowsocks_inbound() {
 }
 EOF
     )
-    log_info "event=shadowsocks_prepared family=ipv6 port=$ss_port"
+    log_info "event=shadowsocks_prepared family=any port=$ss_port"
 }
 
 build_xray_config() {
@@ -2676,13 +2665,7 @@ dry_run_preview() {
     info "检测到系统 / Detected OS: ${os_family} | 架构 / Architecture: ${arch_name}"
 
     if [[ "$keepconfig" -ne 1 ]]; then
-        local preview_ipv6=""
-        preview_ipv6="$(local_global_ipv6_addresses 2>/dev/null | head -n 1)" || true
-        if [[ -n "$preview_ipv6" ]]; then
-            info "将添加Shadowsocks 2022 IPv6入站 / Would add Shadowsocks 2022 inbound on ${preview_ipv6}"
-        else
-            info "未找到本机全局IPv6地址，仅生成Reality入站 / No local global IPv6; Reality inbound only"
-        fi
+        info "将添加Shadowsocks 2022入站 / Would add Shadowsocks 2022 inbound"
     fi
 
     info "将创建目录 / Would create directories:"
@@ -2840,23 +2823,34 @@ EOF
 
 output_default_shadowsocks() {
     [[ -n "$ss_inbound_json" ]] || return 0
-    local userinfo="" share_url="" clash_config=""
+    local userinfo="" share_url="" clash_config="" family="" server="" url_server=""
     userinfo="$(printf '%s:%s' "$SHADOWSOCKS_METHOD" "$ss_password" | base64 | tr -d '\n')"
-    share_url="ss://${userinfo}@[${ss_listen}]:${ss_port}#${current_hostname}-shadowsocks-ipv6"
-    clash_config=$(cat <<-EOF
-- name: ${current_hostname}-shadowsocks-ipv6
+    display_result "SS 连接不可过GFW！只能做为中转落地使用" "$red"
+    for family in 4 6; do
+        if [[ "$family" == 4 ]]; then
+            server="${IPv4:-}"
+            url_server="$server"
+        else
+            server="${IPv6:-}"
+            url_server="[$server]"
+        fi
+        [[ -n "$server" ]] || continue
+        share_url="ss://${userinfo}@${url_server}:${ss_port}#${current_hostname}-shadowsocks-ipv${family}"
+        clash_config=$(cat <<-EOF
+- name: ${current_hostname}-shadowsocks-ipv${family}
   type: ss
-  server: ${ss_listen}
+  server: ${server}
   port: ${ss_port}
   cipher: ${SHADOWSOCKS_METHOD}
   password: ${ss_password}
   udp: true
 EOF
-    )
-    info "Shadowsocks 2022 (IPv6) / Shadowsocks 2022 (IPv6):"
-    display_result "$share_url"
-    display_result "$clash_config"
-    printf '%s\n%s\n' "$share_url" "$clash_config" >> "${share_output_file:-$URL_FILE}"
+        )
+        info "Shadowsocks 2022 (IPv${family}):"
+        display_result "$share_url"
+        display_result "$clash_config"
+        printf '%s\n%s\n' "$share_url" "$clash_config" >> "${share_output_file:-$URL_FILE}"
+    done
 }
 
 output_results() {

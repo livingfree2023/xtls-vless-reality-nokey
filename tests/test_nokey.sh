@@ -939,15 +939,46 @@ else
 fi
 rm -rf "$addsocks_main_dir"
 
-# A link-local or private IPv6 address must not enable the public listener.
+# Sharing uses public endpoints, independently of local address and preferred netstack.
+ss_output_dir="$(mktemp -d)"
 if (
-  ip() { printf '%s\n' 'inet6 fd00::1/64 scope global' 'inet6 fe80::1/64 scope link' 'inet6 2001:db8::10/64 scope global'; }
-  [[ "$(local_global_ipv6_addresses)" == '2001:db8::10' ]]
+  ss_inbound_json='{}'
+  ss_password='test-key'
+  ss_port=12345
+  current_hostname='test-host'
+  share_output_file="$ss_output_dir/connections"
+  netstack=6
+  for family_case in dual v4 v6; do
+    IPv4="192.0.2.10"
+    IPv6="2001:db8::10"
+    [[ "$family_case" != v4 ]] || IPv6=""
+    [[ "$family_case" != v6 ]] || IPv4=""
+    : > "$share_output_file"
+    output_default_shadowsocks > "$ss_output_dir/stdout"
+    grep -q 'SS 连接不可过GFW！只能做为中转落地使用' "$ss_output_dir/stdout" || exit 1
+    if [[ -n "$IPv4" ]]; then
+      grep -q '@192.0.2.10:12345#' "$share_output_file" || exit 1
+      grep -q 'server: 192.0.2.10' "$share_output_file" || exit 1
+    else
+      ! grep -q 'shadowsocks-ipv4' "$share_output_file" || exit 1
+    fi
+    if [[ -n "$IPv6" ]]; then
+      grep -q '@\[2001:db8::10\]:12345#' "$share_output_file" || exit 1
+      grep -q 'server: 2001:db8::10' "$share_output_file" || exit 1
+    else
+      ! grep -q 'shadowsocks-ipv6' "$share_output_file" || exit 1
+    fi
+    ! grep -q 'SS 连接不可' "$share_output_file" || exit 1
+  done
+  # Capture the color argument even when the test runner disables ANSI colors.
+  display_result() { printf '%s|%s\n' "${2:-}" "$1"; }
+  [[ "$(output_default_shadowsocks | head -n 1)" == "${red}|SS 连接不可过GFW！只能做为中转落地使用" ]]
 ); then
-  pass "public local IPv6 detection excludes ULA and link-local"
+  pass "SS public IPv4/IPv6 sharing and colored warning"
 else
-  fail "IPv6 detection should choose only global addresses"
+  fail "SS sharing should cover each detected address and warn in red"
 fi
+rm -rf "$ss_output_dir"
 
 # Test 41b: existing file logs are migrated to systemd journal output
 if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
@@ -968,18 +999,19 @@ if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
     egress_ipv4_available=1
     egress_ipv6_available=1
     default_route_choice=4
-    local_global_ipv6_addresses() { printf '%s\n' '2001:db8::10'; }
+    IPv4="192.0.2.10"
+    IPv6="2001:db8::10"
     is_tcp_port_unused() { return 0; }
     prepare_default_shadowsocks_inbound
-    [[ "$ss_port" != "$port" && "$ss_listen" == '2001:db8::10' ]]
+    [[ "$ss_port" != "$port" ]]
     [[ "$(printf '%s' "$ss_password" | base64 -d | wc -c | tr -d ' ')" -eq 16 ]]
     build_xray_config >/dev/null
     yq -o=json '.' "$pending_xray_config" > "$ss_build_dir/output.json"
-    jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks" and .[1].listen == "2001:db8::10" and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' "$ss_build_dir/output.json" >/dev/null
+    jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks" and (.[1] | has("listen") | not) and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' "$ss_build_dir/output.json" >/dev/null
     output_default_shadowsocks >/dev/null
     grep -q 'ss://.*@\[2001:db8::10\]' "$URL_FILE"
   ); then
-    pass "fresh Reality config adds IPv6 Shadowsocks inbound"
+    pass "fresh Reality config adds wildcard Shadowsocks inbound"
   else
     fail "IPv6 fresh config should contain Reality and Shadowsocks"
   fi
@@ -1001,15 +1033,16 @@ if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
     egress_ipv4_available=1
     egress_ipv6_available=0
     default_route_choice=4
-    local_global_ipv6_addresses() { :; }
+    IPv4="192.0.2.10"
+    IPv6=""
     prepare_default_shadowsocks_inbound
-    [[ -z "$ss_inbound_json" ]]
+    [[ -n "$ss_inbound_json" ]]
     build_xray_config >/dev/null
-    yq -o=json '.' "$pending_xray_config" | jq -e '.inbounds | length == 1 and .[0].protocol == "vless"' >/dev/null
+    yq -o=json '.' "$pending_xray_config" | jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks"' >/dev/null
   ); then
-    pass "fresh Reality config remains single-inbound without IPv6"
+    pass "fresh Reality config includes Shadowsocks without IPv6"
   else
-    fail "no-IPv6 fresh config should contain only Reality"
+    fail "no-IPv6 fresh config should contain Reality and Shadowsocks"
   fi
   rm -rf "$no_ipv6_dir"
 fi

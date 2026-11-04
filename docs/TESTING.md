@@ -16,7 +16,7 @@ bash tests/test_default_route.sh
 - Unit: argument/family mappings, preferred DNS order, existing configuration preservation and legacy Freedom resolution normalization.
 - Module: secure/redacted logs, legacy history migration, nested progress output, command failure and signal cleanup, removed flag handling, validation rejection and failed-restart rollback.
 - YAML: the NoKey suite verifies a fresh YAML template, a fresh `--addsocks` main flow, and a YAML patch round trip when `yq` is available. The feature suite tests automatic binary installation, checksum rejection, temporary-file cleanup, and idempotent Bash/Zsh PATH exports without network or system writes.
-- IPv6 Shadowsocks: the NoKey suite checks local address filtering, a two-inbound fresh config, a Reality-only config without IPv6, and the generated share URL.
+- Shadowsocks: the NoKey suite checks unconditional two-inbound fresh configs with/without IPv6, wildcard listening, public IPv4/IPv6 URL and Clash output, and the red warning.
 - Terminal: local Python 3 PTY probes verify nested colors, cancellation and unavailable choices; these probes explicitly skip when Python is absent.
 - Integration: real Xray parses full generated REALITY templates with disposable keys, then serves a localhost-only SOCKS proxy that makes real HTTPS requests. Both preferences are tested with dual-stack, A-only and AAAA-only targets. Controlled unreachable addresses test actual TCP failover. Output reports only address family, never the actual public address.
 

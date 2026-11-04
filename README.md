@@ -16,7 +16,7 @@
 
 实测可在 Alpine Pod（64MB RAM）环境跑起来，适合超低内存场景。
 
-默认不带参数直接从新机器开始安装 Xray VLESS Reality；检测到本机全局 IPv6 地址时，还会在同一 Xray 配置中自动加入 Shadowsocks 2022 入站。魔改功能为
+默认不带参数直接从新机器开始安装 Xray VLESS Reality；同时会在同一 Xray 配置中自动加入 Shadowsocks 2022 入站。魔改功能为
 1. 自动跳过不必要的系统环境更新
 2. 自动跳过不必要的geodata更新（--force参数可强制更新）
 3. 按照官方命令生成UUID/KeyPair
@@ -77,7 +77,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/livingfree2023/nokey/refs/he
 
 脚本安装的 `yq` 位于 `/usr/local/libexec/nokey/yq`。安装后会在已有的 `~/.bashrc` 和 `~/.zshrc` 中加入 PATH 设置；新开终端即可直接运行 `yq`，当前终端需执行 `source ~/.bashrc` 或 `source ~/.zshrc`。
 
-默认安装与菜单选项 1 行为相同：有本机全局 IPv6 时，Reality 与 Shadowsocks 2022 自动作为两个入站写入同一 Xray 配置；无 IPv6 时仅安装 Reality。Shadowsocks 使用 `2022-blake3-aes-128-gcm`，仅监听本机全局 IPv6 地址。配置经 Xray 校验并成功重启后输出 `ss://` 链接。
+默认安装与菜单选项 1 行为相同：Reality 与 Shadowsocks 2022 自动作为两个入站写入同一 Xray 配置，不要求本机有公网 IPv6。Shadowsocks 使用 `2022-blake3-aes-128-gcm`，监听所有网卡。配置经 Xray 校验并成功重启后，按检测到的公网 IPv4、IPv6 分别输出 `ss://` 链接与 Clash 配置，并以红色提示「SS 连接不可过GFW！只能做为中转落地使用」。容器或 NAT 环境仍需上游放行或映射相应端口。
 
 菜单中的acme.sh功能使用Cloudflare DNS验证（输入API token时）或80端口HTTP验证，并把证书安装到`/etc/hysteria/`。Hysteria2默认选择10000以上的随机空闲端口（可用`--port`指定），如果提供Cloudflare token，会优先使用内置ACME DNS验证；否则检测该目录和`~/.acme.sh/`中的证书，找不到时提示输入证书和私钥路径。服务启动成功后，`nokey.url`会保存链接和Mihomo/Clash YAML配置，并输出systemd/OpenRC重启和状态检查命令。
 
