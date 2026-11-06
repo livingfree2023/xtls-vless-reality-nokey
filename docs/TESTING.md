@@ -16,7 +16,7 @@ bash tests/test_default_route.sh
 - Unit: argument/family mappings, preferred DNS order, existing configuration preservation and legacy Freedom resolution normalization.
 - Module: secure/redacted logs, legacy history migration, nested progress output, command failure and signal cleanup, removed flag handling, validation rejection and failed-restart rollback.
 - YAML: the NoKey suite verifies a fresh YAML template, a fresh `--addsocks` main flow, and a YAML patch round trip when `yq` is available. The feature suite tests automatic binary installation, checksum rejection, temporary-file cleanup, and idempotent Bash/Zsh PATH exports without network or system writes.
-- Shadowsocks: the NoKey suite checks unconditional two-inbound fresh configs with/without IPv6, wildcard listening, public IPv4/IPv6 URL and Clash output, and the red warning.
+- Shadowsocks: the NoKey suite checks unconditional three-inbound fresh configs with/without IPv6, wildcard listening, public IPv4/IPv6 URL and Clash output for both SS ciphers, independent keys/ports, and the red warning.
 - Terminal: local Python 3 PTY probes verify nested colors, cancellation and unavailable choices; these probes explicitly skip when Python is absent.
 - Integration: real Xray parses full generated REALITY templates with disposable keys, then serves a localhost-only SOCKS proxy that makes real HTTPS requests. Both preferences are tested with dual-stack, A-only and AAAA-only targets. Controlled unreachable addresses test actual TCP failover. Output reports only address family, never the actual public address.
 
@@ -29,3 +29,5 @@ bash tests/integration_default_route.sh
 Requires Bash, jq, curl, ss, Xray 26.10.21+ in PATH, and geoip.dat/geosite.dat in `XRAY_LOCATION_ASSET` (default `/usr/local/share/xray`). Missing network families are explicitly skipped, so a single-stack host cannot establish full dual-stack coverage. The script uses temporary configs/keys and loopback listeners, and removes them on exit. It does not replace installed binaries, write production config or restart existing services. A separately staged binary can be selected through PATH.
 
 `run_logged` isolates command execution in a subshell to preserve caller traps and clean temporary captures on signals. Do not wrap helpers whose variable changes must propagate to the caller.
+
+Node naming: test_nokey.sh covers regional flags, suffixes, URI/YAML escaping and invokes test_node_names.py (when Python is available) for real controlling-terminal default/custom names and country lookup fallback. Network is stubbed in offline prompt tests.

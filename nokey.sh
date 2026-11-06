@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.42"
+readonly SCRIPT_VERSION="2026.43"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -56,6 +56,8 @@ fi
 
 mldsa_enabled=0
 current_hostname=$(hostname)
+node_base_name=""
+node_country=""
 caddy_mode=0
 reality_dest_port=443  # default port for REALITY destination (not the inbound port)
 dry_run=0
@@ -93,6 +95,9 @@ socks_inbound_json=""
 ss_port=""
 ss_password=""
 ss_inbound_json=""
+ss_aes_port=""
+ss_aes_password=""
+ss_aes_inbound_json=""
 random_unused_port=""
 arg_port_set=0
 arg_domain_set=0
@@ -1632,6 +1637,9 @@ generate_crypto() {
 }
 
 prepare_default_shadowsocks_inbound() {
+    ss_aes_port=""
+    ss_aes_password=""
+    ss_aes_inbound_json=""
     ss_inbound_json=""
     ss_port=""
     ss_password=""
@@ -1651,7 +1659,24 @@ prepare_default_shadowsocks_inbound() {
 }
 EOF
     )
-    log_info "event=shadowsocks_prepared family=any port=$ss_port"
+    select_random_unused_port "" "$port" "$socks_port" "$ss_port" || return 1
+    ss_aes_port="$random_unused_port"
+    ss_aes_password="$(random_hex 32)" || return 1
+    [[ ${#ss_aes_password} -eq 64 ]] || return 1
+    ss_aes_inbound_json=$(cat <<-EOF
+{
+  "tag": "${SHADOWSOCKS_AES_TAG}",
+  "port": ${ss_aes_port},
+  "protocol": "shadowsocks",
+  "settings": {
+    "network": "tcp,udp",
+    "method": "${SHADOWSOCKS_AES_METHOD}",
+    "password": "${ss_aes_password}"
+  }
+}
+EOF
+    )
+    log_info "event=shadowsocks_prepared family=any port=$ss_port aes_port=$ss_aes_port"
 }
 
 build_xray_config() {
@@ -1741,7 +1766,7 @@ EOF
         reality_template="$(printf '%s\n' "$reality_template" | sed '/privateKey:/a\        mldsa65Seed: "'"$mldsa65Seed"'"')"
     fi
     local inbound_json="" inbound_yaml="" inbound_entry=""
-    for inbound_json in "$socks_inbound_json" "$ss_inbound_json"; do
+    for inbound_json in "$socks_inbound_json" "$ss_inbound_json" "$ss_aes_inbound_json"; do
         [[ -n "$inbound_json" ]] || continue
         require_xray_yaml_tool || return 1
         inbound_yaml="$(printf '%s\n' "$inbound_json" | "$xray_yaml_tool_path" -p=json -o=yaml '.' -)" || return 1
@@ -2248,7 +2273,7 @@ prepare_socks_inbound() {
     fi
 
     # Avoid both existing config ports and currently listening sockets.
-    if ! select_random_unused_port "$config_source" "${port:-}" "${ss_port:-}"; then
+    if ! select_random_unused_port "$config_source" "${port:-}" "${ss_port:-}" "${ss_aes_port:-}"; then
         error "没有找到可用的SOCKS端口 / Could not find an unused SOCKS port."
         return 1
     fi
@@ -2665,7 +2690,7 @@ dry_run_preview() {
     info "检测到系统 / Detected OS: ${os_family} | 架构 / Architecture: ${arch_name}"
 
     if [[ "$keepconfig" -ne 1 ]]; then
-        info "将添加Shadowsocks 2022入站 / Would add Shadowsocks 2022 inbound"
+        info "将添加SS 2022与aes-256-gcm入站 / Would add SS 2022 and aes-256-gcm inbounds"
     fi
 
     info "将创建目录 / Would create directories:"
@@ -2734,17 +2759,71 @@ check_service_status() {
     task_done
 }
 
+country_flag() {
+    local country="$1" escaped=""
+    [[ "$country" =~ ^[A-Z][A-Z]$ ]] || return 1
+    escaped="$(LC_ALL=C awk -v country="$country" 'BEGIN {
+        letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        for (i=1; i<=2; i++) printf "\\360\\237\\207\\%03o", 165+index(letters, substr(country,i,1))
+    }')"
+    printf '%b' "$escaped"
+}
+
+prepare_node_identity() {
+    local entered_name="" country=""
+    node_base_name="$current_hostname"
+    if { exec 3</dev/tty; } 2>/dev/null; then
+        display_result "节点名称 / Node name [$current_hostname]:" >&2
+        IFS= read -r entered_name <&3 || entered_name=""
+        exec 3<&-
+        if [[ -n "$entered_name" ]]; then
+            if LC_ALL=C printf '%s' "$entered_name" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+                warn "节点名称包含控制字符，使用hostname / Invalid name; using hostname"
+            else
+                node_base_name="$entered_name"
+            fi
+        fi
+    fi
+    node_country=""
+    country="$(curl -fsSL --connect-timeout 3 --max-time 5 https://ipinfo.io/json 2>/dev/null | jq -er '.country | select(type == "string")' 2>/dev/null)" || country=""
+    if [[ "$country" =~ ^[A-Z][A-Z]$ ]]; then
+        node_country="$country"
+    else
+        log_info "event=node_country status=unavailable"
+    fi
+}
+
+format_node_name() {
+    local protocol="$1" family="$2" prefix=""
+    if [[ -n "$node_country" ]]; then
+        prefix="$(country_flag "$node_country")${node_country}."
+    fi
+    printf '%s%s.%s' "$prefix" "${node_base_name:-$current_hostname}" "$protocol"
+    [[ "$family" != 6 ]] || printf '.V6'
+    return 0
+}
+
+node_name_uri() {
+    jq -nr --arg name "$1" '$name | @uri'
+}
+
+node_name_yaml() {
+    jq -cn --arg name "$1" '$name'
+}
+
 generate_share_links() {
+    local node_name=""
+    node_name="$(node_name_uri "$(format_node_name VR "$netstack")")"
     if [[ $netstack == "6" && "$ip" != \[*\] ]]; then
       ip="[$ip]"
     fi
 
-    vless_reality_url_short="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}"
+    vless_reality_url_short="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${node_name}"
 
     info "分享链接 / Share Link:"
 
     if [[ $mldsa_enabled == 1 ]]; then
-      vless_reality_mldsa_url="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}&pqv=${mldsa65Verify}#${current_hostname}"
+      vless_reality_mldsa_url="vless://${uuid}@${ip}:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}&pqv=${mldsa65Verify}#${node_name}"
       display_result "${vless_reality_mldsa_url}"
       echo "$vless_reality_mldsa_url" >> "${share_output_file:-$URL_FILE}"
       info "不含mldsa / Without mldsa:"
@@ -2757,6 +2836,8 @@ generate_share_links() {
 }
 
 generate_clash_config() {
+    local node_name=""
+    node_name="$(node_name_yaml "$(format_node_name VR "$netstack")")"
     local server_ip_for_clash=$ip
     if [[ $netstack == "6" ]]; then
         # for clash meta, ipv6 does not need bracket.
@@ -2766,7 +2847,7 @@ generate_clash_config() {
     fi
 
     clash_meta_config=$(cat <<-EOF
-- name: ${current_hostname}
+- name: ${node_name}
   type: vless
   server: ${server_ip_for_clash}
   port: ${port}
@@ -2792,15 +2873,17 @@ EOF
 generate_ipv6_variants() {
     [[ $netstack == "4" && -n "${IPv6:-}" ]] || return 0
 
-    local ipv6_link
-    ipv6_link="vless://${uuid}@[${IPv6}]:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${current_hostname}-ipv6"
+    local ipv6_link node_name
+    node_name="$(node_name_uri "$(format_node_name VR 6)")"
+    ipv6_link="vless://${uuid}@[${IPv6}]:${port}?flow=xtls-rprx-vision&encryption=none&type=tcp&security=reality&sni=${domain}&fp=${fingerprint}&pbk=${public_key}&sid=${shortid}#${node_name}"
     info "分享链接 (IPv6) / Share Link (IPv6):"
     display_result "${ipv6_link}"
     echo "$ipv6_link" >> "${share_output_file:-$URL_FILE}"
 
     local ipv6_clash
+    node_name="$(node_name_yaml "$(format_node_name VR 6)")"
     ipv6_clash=$(cat <<-EOF
-- name: ${current_hostname}-ipv6
+- name: ${node_name}
   type: vless
   server: ${IPv6}
   port: ${port}
@@ -2821,11 +2904,10 @@ EOF
     echo "$ipv6_clash" >> "${share_output_file:-$URL_FILE}"
 }
 
-output_default_shadowsocks() {
-    [[ -n "$ss_inbound_json" ]] || return 0
-    local userinfo="" share_url="" clash_config="" family="" server="" url_server=""
-    userinfo="$(printf '%s:%s' "$SHADOWSOCKS_METHOD" "$ss_password" | base64 | tr -d '\n')"
-    display_result "SS 连接不可过GFW！只能做为中转落地使用" "$red"
+output_shadowsocks_variant() {
+    local method="$1" password="$2" listen_port="$3" name="$4" title="$5"
+    local userinfo="" share_url="" clash_config="" family="" server="" url_server="" node_name=""
+    userinfo="$(printf '%s:%s' "$method" "$password" | base64 | tr -d '\n')"
     for family in 4 6; do
         if [[ "$family" == 4 ]]; then
             server="${IPv4:-}"
@@ -2835,22 +2917,32 @@ output_default_shadowsocks() {
             url_server="[$server]"
         fi
         [[ -n "$server" ]] || continue
-        share_url="ss://${userinfo}@${url_server}:${ss_port}#${current_hostname}-shadowsocks-ipv${family}"
+        node_name="$(format_node_name "$name" "$family")"
+        share_url="ss://${userinfo}@${url_server}:${listen_port}#$(node_name_uri "$node_name")"
         clash_config=$(cat <<-EOF
-- name: ${current_hostname}-shadowsocks-ipv${family}
+- name: $(node_name_yaml "$node_name")
   type: ss
   server: ${server}
-  port: ${ss_port}
-  cipher: ${SHADOWSOCKS_METHOD}
-  password: ${ss_password}
+  port: ${listen_port}
+  cipher: ${method}
+  password: ${password}
   udp: true
 EOF
         )
-        info "Shadowsocks 2022 (IPv${family}):"
+        info "${title} (IPv${family}):"
         display_result "$share_url"
         display_result "$clash_config"
         printf '%s\n%s\n' "$share_url" "$clash_config" >> "${share_output_file:-$URL_FILE}"
     done
+}
+
+output_default_shadowsocks() {
+    [[ -n "$ss_inbound_json" ]] || return 0
+    display_result "SS 连接不可过GFW！只能做为中转落地使用" "$red"
+    output_shadowsocks_variant "$SHADOWSOCKS_METHOD" "$ss_password" "$ss_port" "SS2022" "Shadowsocks 2022" || return 1
+    if [[ -n "$ss_aes_inbound_json" ]]; then
+        output_shadowsocks_variant "$SHADOWSOCKS_AES_METHOD" "$ss_aes_password" "$ss_aes_port" "SS" "Shadowsocks aes-256-gcm"
+    fi
 }
 
 output_results() {
@@ -2861,6 +2953,7 @@ output_results() {
         print_service_commands "$REALM_SERVICE_NAME" "$REALM_SERVICE_NAME_ALPINE"
         return
     fi
+    prepare_node_identity
     separator
     display_result "Xray VLESS REALITY" "$green"
     display_result "IP:Port → ${ip}:${port}"

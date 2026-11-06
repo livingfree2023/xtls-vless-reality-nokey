@@ -108,7 +108,8 @@ fi
 private_key='KNOWN_PRIVATE_SENTINEL'
 uuid='KNOWN_UUID_SENTINEL'
 socks_password='KNOWN_SOCKS_SENTINEL'
-log_info "keys: $private_key $uuid $socks_password"
+ss_aes_password='KNOWN_AES_SENTINEL'
+log_info "keys: $private_key $uuid $socks_password $ss_aes_password"
 printf '%s\n' \
   'PrivateKey: UNKNOWN_PRIVATE_SENTINEL' \
   'Authorization: Bearer UNKNOWN_TOKEN_SENTINEL' \

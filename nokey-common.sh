@@ -8,6 +8,8 @@ if [[ -z "${URL_FILE:-}" ]]; then
     readonly URL_FILE="nokey.url"
 fi
 readonly SHADOWSOCKS_METHOD="2022-blake3-aes-128-gcm"
+readonly SHADOWSOCKS_AES_METHOD="aes-256-gcm"
+readonly SHADOWSOCKS_AES_TAG="nokey-shadowsocks-aes-256-gcm"
 readonly SHADOWSOCKS_TAG="nokey-shadowsocks-ipv6"
 if [[ -t 1 ]]; then
     readonly red=$'\033[91m'
@@ -230,7 +232,7 @@ init_output_files() {
 sanitize_log_stream() {
     local log_line="" secret_name="" secret_value="" secret_part=""
     while IFS= read -r log_line || [[ -n "$log_line" ]]; do
-        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password ss_password; do
+        for secret_name in private_key public_key uuid shortid mldsa65Seed mldsa65Verify socks_username socks_password ss_password ss_aes_password; do
             secret_value="${!secret_name:-}"
             while [[ -n "$secret_value" ]]; do
                 secret_part="${secret_value%%$'\n'*}"

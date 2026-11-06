@@ -13,6 +13,32 @@ source "$REPO_ROOT/nokey.sh"
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
+# Common node names support all ISO-style country letters and safe output syntax.
+if (
+  [[ "$(country_flag HK)" == '🇭🇰' && "$(country_flag SG)" == '🇸🇬' && "$(country_flag TW)" == '🇹🇼' && "$(country_flag JP)" == '🇯🇵' && "$(country_flag US)" == '🇺🇸' ]] || exit 1
+  ! country_flag 'bad' || exit 1
+  node_country=HK
+  node_base_name=WAWO200
+  [[ "$(format_node_name SS 6)" == '🇭🇰HK.WAWO200.SS.V6' ]] || exit 1
+  [[ "$(format_node_name VR 4)" == '🇭🇰HK.WAWO200.VR' ]] || exit 1
+  [[ "$(format_node_name SS2022 6)" == '🇭🇰HK.WAWO200.SS2022.V6' ]] || exit 1
+  node_country=""
+  node_base_name=""
+  current_hostname=testhost
+  [[ "$(format_node_name VR 4)" == testhost.VR ]] || exit 1
+  unsafe_name='a: "b" #c &d'
+  [[ "$(node_name_yaml "$unsafe_name" | jq -r '.')" == "$unsafe_name" ]] || exit 1
+  [[ "$(node_name_uri "$unsafe_name")" == 'a%3A%20%22b%22%20%23c%20%26d' ]]
+); then
+  pass "country flags, protocol/family suffixes and escaped node names"
+else
+  fail "node names must be portable and safe in URLs/YAML"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$SCRIPT_DIR/test_node_names.py" || fail "node-name TTY prompt"
+fi
+
 # The default output must give Mihomo a REALITY-compatible Chrome fingerprint.
 fingerprint_dir="$(mktemp -d)"
 if (
@@ -30,6 +56,7 @@ if (
   addsocks_mode=0
   check_service_status() { :; }
   print_service_commands() { :; }
+  prepare_node_identity() { :; }
   output_results >/dev/null 2>&1
   grep -q 'fp=chrome' "$URL_FILE" \
     && grep -q 'client-fingerprint: chrome' "$URL_FILE" \
@@ -330,7 +357,7 @@ if (
   mldsa_enabled=1
   mldsa65Verify="VERIFYVALUE"
   generate_share_links >/dev/null 2>&1
-  [[ "$vless_reality_mldsa_url" == *"&pqv=VERIFYVALUE#testhost" ]] \
+  [[ "$vless_reality_mldsa_url" == *"&pqv=VERIFYVALUE#testhost.VR" ]] \
     && [[ "$vless_reality_mldsa_url" != *"&#"* ]]
 ); then
   pass "mldsa share URL fragment"
@@ -525,8 +552,8 @@ if (
   generate_ipv6_variants >/dev/null 2>&1
   [[ -f "$URL_FILE" ]] \
     && grep -q "vless://test-uuid@\[2001:db8::10\]:443" "$URL_FILE" \
-    && grep -q "#testhost-ipv6" "$URL_FILE" \
-    && grep -q -- "- name: testhost-ipv6" "$URL_FILE" \
+    && grep -q "#testhost.VR.V6" "$URL_FILE" \
+    && grep -q -- "- name: \"testhost.VR.V6\"" "$URL_FILE" \
     && grep -q "server: 2001:db8::10" "$URL_FILE" \
     && grep -q "support-x25519mlkem768: true" "$URL_FILE"
 ); then
@@ -943,6 +970,9 @@ rm -rf "$addsocks_main_dir"
 ss_output_dir="$(mktemp -d)"
 if (
   ss_inbound_json='{}'
+  ss_aes_inbound_json='{}'
+  ss_aes_port=12346
+  ss_aes_password='independent-aes-key'
   ss_password='test-key'
   ss_port=12345
   current_hostname='test-host'
@@ -960,15 +990,25 @@ if (
       grep -q '@192.0.2.10:12345#' "$share_output_file" || exit 1
       grep -q 'server: 192.0.2.10' "$share_output_file" || exit 1
     else
-      ! grep -q 'shadowsocks-ipv4' "$share_output_file" || exit 1
+      ! grep -q 'server: 192.0.2.10' "$share_output_file" || exit 1
     fi
     if [[ -n "$IPv6" ]]; then
       grep -q '@\[2001:db8::10\]:12345#' "$share_output_file" || exit 1
       grep -q 'server: 2001:db8::10' "$share_output_file" || exit 1
     else
-      ! grep -q 'shadowsocks-ipv6' "$share_output_file" || exit 1
+      ! grep -q 'server: 2001:db8::10' "$share_output_file" || exit 1
     fi
-    ! grep -q 'SS 连接不可' "$share_output_file" || exit 1
+    credentials="$(printf '%s' 'aes-256-gcm:independent-aes-key' | base64 | tr -d '\n')"
+    if [[ -n "$IPv4" ]]; then
+      grep -Fq "ss://${credentials}@192.0.2.10:12346#test-host.SS" "$share_output_file" || exit 1
+    fi
+    if [[ -n "$IPv6" ]]; then
+      grep -Fq "ss://${credentials}@[2001:db8::10]:12346#test-host.SS.V6" "$share_output_file" || exit 1
+    fi
+    grep -q 'cipher: aes-256-gcm' "$share_output_file" || exit 1
+    grep -q 'password: independent-aes-key' "$share_output_file" || exit 1
+    [[ "$(grep -c 'SS 连接不可' "$ss_output_dir/stdout")" -eq 1 ]] || exit 1
+    ! grep -q 'SS 连接不可'  "$share_output_file" || exit 1
   done
   # Capture the color argument even when the test runner disables ANSI colors.
   display_result() { printf '%s|%s\n' "${2:-}" "$1"; }
@@ -1002,12 +1042,15 @@ if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
     IPv4="192.0.2.10"
     IPv6="2001:db8::10"
     is_tcp_port_unused() { return 0; }
-    prepare_default_shadowsocks_inbound
+    prepare_default_shadowsocks_inbound || exit 1
+    [[ "$ss_aes_port" != "$ss_port" && "$ss_aes_port" != "$port" && "$ss_aes_port" != "$socks_port" ]] || exit 1
+    [[ "$ss_aes_password" != "$ss_password" && "$ss_aes_password" =~ ^[0-9a-f]{64}$ ]] || exit 1
     [[ "$ss_port" != "$port" ]]
     [[ "$(printf '%s' "$ss_password" | base64 -d | wc -c | tr -d ' ')" -eq 16 ]]
     build_xray_config >/dev/null
     yq -o=json '.' "$pending_xray_config" > "$ss_build_dir/output.json"
-    jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks" and (.[1] | has("listen") | not) and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' "$ss_build_dir/output.json" >/dev/null
+    jq -e '.inbounds | length == 3 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks" and (.[1] | has("listen") | not) and .[1].settings.method == "2022-blake3-aes-128-gcm" and .[1].settings.network == "tcp,udp"' "$ss_build_dir/output.json" >/dev/null
+    jq -e --arg key "$ss_aes_password" --argjson aes_port "$ss_aes_port" '.inbounds[2] | .protocol == "shadowsocks" and .port == $aes_port and .settings.method == "aes-256-gcm" and .settings.password == $key and .settings.network == "tcp,udp" and (has("listen") | not)' "$ss_build_dir/output.json" >/dev/null || exit 1
     output_default_shadowsocks >/dev/null
     grep -q 'ss://.*@\[2001:db8::10\]' "$URL_FILE"
   ); then
@@ -1038,7 +1081,7 @@ if command -v jq >/dev/null 2>&1 && command -v yq >/dev/null 2>&1; then
     prepare_default_shadowsocks_inbound
     [[ -n "$ss_inbound_json" ]]
     build_xray_config >/dev/null
-    yq -o=json '.' "$pending_xray_config" | jq -e '.inbounds | length == 2 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks"' >/dev/null
+    yq -o=json '.' "$pending_xray_config" | jq -e '.inbounds | length == 3 and .[0].protocol == "vless" and .[1].protocol == "shadowsocks"' >/dev/null
   ); then
     pass "fresh Reality config includes Shadowsocks without IPv6"
   else

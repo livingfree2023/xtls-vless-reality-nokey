@@ -2,7 +2,7 @@
 
 `nokey.sh` owns Xray installation, REALITY template generation and focused configuration patches. Feature entrypoints cover Realm, SOCKS, WARP, BBR, ACME and Hysteria2. Shared terminal/logging functions live in `nokey-common.sh`; machine-readable helper stdout must remain free of UI messages.
 
-Fresh Reality installs always include a wildcard Shadowsocks 2022 TCP/UDP inbound. Both inbounds use the same Xray service and staged validation/rollback path. SS sharing uses detected public IPv4/IPv6 endpoints rather than local interface addresses and prints a red relay-use warning. NAT ingress still depends on upstream mapping.
+Fresh Reality installs always include wildcard Shadowsocks 2022 and aes-256-gcm TCP/UDP inbounds on independent ports. All inbounds use the same Xray service and staged validation/rollback path. SS sharing uses detected public IPv4/IPv6 endpoints rather than local interface addresses and prints a red relay-use warning. NAT ingress still depends on upstream mapping.
 
 ## Configuration flow
 
@@ -30,3 +30,5 @@ Xray runtime output remains with systemd journal or the existing OpenRC service 
 NoKey configs use `/usr/local/etc/nokey/nokey.yaml`, which Xray reads directly. If only a legacy NoKey `nokey.json` exists, the main flow archives it under `/usr/local/etc/nokey-legacy.json.*` and creates a fresh YAML config. Existing JSON values are not migrated. jq-based patch modes use a temporary JSON view for YAML inputs, then serialize the final staged result back to YAML before Xray validation and atomic replacement. A matching Mike Farah `yq` is reused; otherwise the pinned v4.54.1 binary is downloaded to NoKey's private tool directory and verified against a fixed SHA-256 before use. The private tool directory is added to the installer's PATH and to existing Bash/Zsh rc files for future shells. A patch rewrites YAML formatting and comments.
 
 Binary downloads are staged, executable/version checked and atomically renamed. Config rollback restores configuration; it is not a full binary or OS rollback. A new install with no previous config reports that recovery boundary explicitly.
+
+Connection output asks for a node base name through /dev/tty, defaulting to hostname. A single bounded HTTPS ipinfo.io/json lookup supplies country only; failure omits the flag/country prefix. Common naming adds .VR/.SS2022/.SS and .V6 for IPv6, with URI fragment encoding and JSON-quoted YAML names. No hostname or Xray settings are changed.
