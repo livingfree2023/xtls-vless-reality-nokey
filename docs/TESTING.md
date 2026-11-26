@@ -14,6 +14,9 @@ bash tests/test_default_route.sh
 ## Coverage
 
 - Unit: argument/family mappings, preferred DNS order, existing configuration preservation and legacy Freedom resolution normalization.
+- Routing templates: parse real staged YAML for both default family preferences,
+  checking AI/YouTube rules, default/forced outbound references, retained block
+  rules and commented family alternatives.
 - Module: secure/redacted logs, legacy history migration, nested progress output, command failure and signal cleanup, removed flag handling, validation rejection and failed-restart rollback.
 - YAML: the NoKey suite verifies a fresh YAML template, a fresh `--addsocks` main flow, and a YAML patch round trip when `yq` is available. The feature suite tests automatic binary installation, checksum rejection, temporary-file cleanup, and idempotent Bash/Zsh PATH exports without network or system writes.
 - Shadowsocks: the NoKey suite checks unconditional three-inbound fresh configs with/without IPv6, wildcard listening, public IPv4/IPv6 URL and Clash output for both SS ciphers, independent keys/ports, and the red warning.

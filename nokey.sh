@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.44"
+readonly SCRIPT_VERSION="2026.45"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -1867,6 +1867,16 @@ routing:
   domainStrategy: IPIfNonMatch
   rules:
     # Add custom routing rules above the default block rules.
+    - type: field
+      domain: ["geosite:category-ai-!cn"]
+      outboundTag: direct
+      # outboundTag: force_ipv4
+      # outboundTag: force_ipv6
+    - type: field
+      domain: ["geosite:youtube"]
+      outboundTag: direct
+      # outboundTag: force_ipv4
+      # outboundTag: force_ipv6
     - type: field
       ip: ["geoip:private", "geoip:cn"]
       outboundTag: block

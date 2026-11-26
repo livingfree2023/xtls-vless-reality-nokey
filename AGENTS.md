@@ -24,6 +24,7 @@ Fedora, AlmaLinux.
 
 - `specs/2026-11-05-node-names/`: interactive base name, country flag and protocol/family suffixes.
 - `specs/2026-11-25-utf8-locale/`: verified UTF-8 locale preparation and base jq dependency.
+- `specs/2026-11-25-domain-routing-presets/`: AI/YouTube rules and commented family alternatives.
 
 ## Non-negotiables
 

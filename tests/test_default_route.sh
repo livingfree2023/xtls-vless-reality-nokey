@@ -32,6 +32,38 @@ for family in 4 6; do
 done
 pass "dual-stack preference and DNS ordering"
 
+# Fresh domain presets must reference the selected default, leaving forced
+# family outbounds available for operators to select manually.
+if command -v yq >/dev/null 2>&1; then
+  port=443
+  domain=example.com
+  uuid=test-uuid
+  private_key=test-private-key
+  shortid=abcd1234
+  mldsa_enabled=0
+  xray_config_path="$fixture_dir/presets.yaml"
+  for family in 4 6; do
+    default_route_choice="$family"
+    build_xray_config >/dev/null || fail "domain preset template generation"
+    yq -o=json '.' "$pending_xray_config" > "$fixture_dir/presets.json"
+    jq -e --argjson ipv6 "$([[ "$family" == 6 ]] && echo true || echo false)" '
+      .outbounds[0].tag as $default |
+      $default == "direct" and
+      .outbounds[0].streamSettings.sockopt.happyEyeballs.prioritizeIPv6 == $ipv6 and
+      (.routing.rules[0:2] | map(.domain) == [["geosite:category-ai-!cn"], ["geosite:youtube"]]) and
+      all(.routing.rules[0:2][]; .type == "field" and .outboundTag == $default) and
+      ([.outbounds[].tag] | index("force_ipv4") != null and index("force_ipv6") != null) and
+      .routing.rules[2].outboundTag == "block" and .routing.rules[3].protocol == ["bittorrent"]
+    ' "$fixture_dir/presets.json" >/dev/null || fail "domain presets must follow default preference and preserve blocks"
+    [[ "$(grep -c '^      # outboundTag: force_ipv4$' "$pending_xray_config")" -eq 2 &&
+       "$(grep -c '^      # outboundTag: force_ipv6$' "$pending_xray_config")" -eq 2 ]] || fail "YAML must preserve both commented alternatives per preset"
+    rm -f "$pending_xray_config"
+  done
+  pass "AI and YouTube presets follow default egress with commented family alternatives"
+else
+  pass "domain preset template parsing skipped (yq unavailable)"
+fi
+
 for family in 4 6; do
   default_route_choice="$family"
   egress_ipv4_available=0

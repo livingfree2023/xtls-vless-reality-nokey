@@ -19,6 +19,12 @@ flowchart LR
 
 Egress selection is independent of the server address advertised to clients. `--netstack` selects the latter; `--default-route` chooses preferred egress. The first Freedom outbound carries the default policy. Explicit `force_ipv4`, `force_ipv6`, WARP and block tags retain their routing purpose. TCP Happy Eyeballs applies to unresolved domain targets; UDP and literal IPs have different semantics.
 
+Fresh Xray templates include separate AI (`geosite:category-ai-!cn`) and YouTube
+(`geosite:youtube`) rules using the default `direct` outbound. Each has commented
+`force_ipv4`/`force_ipv6` outboundTag alternatives for manual selection. They
+precede the default block rules. Existing configs are not automatically migrated;
+YAML comments survive fresh generation but are lost in JSON conversion/patches.
+
 Global DNS `UseIP` keeps A and AAAA on a reachable dual-stack host. A single-stack host restricts queries to that family. Resolver transport addresses are ordered by preference; existing split DNS objects and unrelated DNS settings survive patches. An incompatible custom proxy, bind or ambiguous default policy is rejected.
 
 ## Diagnostics and sensitive output
