@@ -13,6 +13,8 @@ source "$REPO_ROOT/nokey.sh"
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
+bash "$SCRIPT_DIR/test_locale.sh" || fail "UTF-8 locale preparation"
+
 # Common node names support all ISO-style country letters and safe output syntax.
 if (
   [[ "$(country_flag HK)" == '🇭🇰' && "$(country_flag SG)" == '🇸🇬' && "$(country_flag TW)" == '🇹🇼' && "$(country_flag JP)" == '🇯🇵' && "$(country_flag US)" == '🇺🇸' ]] || exit 1

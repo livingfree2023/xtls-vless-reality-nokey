@@ -32,3 +32,10 @@ NoKey configs use `/usr/local/etc/nokey/nokey.yaml`, which Xray reads directly. 
 Binary downloads are staged, executable/version checked and atomically renamed. Config rollback restores configuration; it is not a full binary or OS rollback. A new install with no previous config reports that recovery boundary explicitly.
 
 Connection output asks for a node base name through /dev/tty, defaulting to hostname. A single bounded HTTPS ipinfo.io/json lookup supplies country only; failure omits the flag/country prefix. Common naming adds .VR/.SS2022/.SS and .V6 for IPv6, with URI fragment encoding and JSON-quoted YAML names. No hostname or Xray settings are changed.
+
+Xray dependency preparation includes jq and a verified UTF-8 locale before
+configuration or node-name output. Locale support is installed only when no
+usable locale is found; generation builds a single locale without a shared
+archive. The installer exports UTF-8 overrides and persists defaults plus a
+managed login profile. Dry runs, removal and Realm-only flows skip locale
+changes. See specs/2026-11-25-utf8-locale for platform mappings and limitations.

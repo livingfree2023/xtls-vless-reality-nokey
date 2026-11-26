@@ -23,6 +23,7 @@ Fedora, AlmaLinux.
 - `specs/2026-11-05-shadowsocks-aes256/`: additional AES-256-GCM SS contract.
 
 - `specs/2026-11-05-node-names/`: interactive base name, country flag and protocol/family suffixes.
+- `specs/2026-11-25-utf8-locale/`: verified UTF-8 locale preparation and base jq dependency.
 
 ## Non-negotiables
 
@@ -61,7 +62,7 @@ Fedora, AlmaLinux.
 
 ```bash
 for script in nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh; do bash -n "$script"; done
-shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh
+shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh tests/test_locale.sh
 bash tests/test_nokey.sh
 bash tests/test_features.sh
 bash tests/test_logging.sh

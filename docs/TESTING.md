@@ -4,7 +4,7 @@ Run from the repository root. The offline suites source the installer and isolat
 
 ```bash
 for script in nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh; do bash -n "$script"; done
-shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh
+shellcheck -x nokey.sh nokey-common.sh realm.sh xray-socks.sh xray-warp.sh bbr.sh acme-cert.sh hysteria2.sh tests/test_nokey.sh tests/test_features.sh tests/test_logging.sh tests/test_default_route.sh tests/integration_default_route.sh tests/test_locale.sh
 bash tests/test_nokey.sh
 bash tests/test_features.sh
 bash tests/test_logging.sh
@@ -31,3 +31,9 @@ Requires Bash, jq, curl, ss, Xray 26.10.21+ in PATH, and geoip.dat/geosite.dat i
 `run_logged` isolates command execution in a subshell to preserve caller traps and clean temporary captures on signals. Do not wrap helpers whose variable changes must propagate to the caller.
 
 Node naming: test_nokey.sh covers regional flags, suffixes, URI/YAML escaping and invokes test_node_names.py (when Python is available) for real controlling-terminal default/custom names and country lookup fallback. Network is stubbed in offline prompt tests.
+
+Locale: test_nokey.sh also runs test_locale.sh for verified UTF-8 selection,
+package mappings (including Alpine and CentOS 7), generation/failure handling,
+runtime overrides, persistent defaults/profile preservation and idempotence,
+unsafe/write-failure paths, base jq installation and Realm-only bypass. Package
+operations are isolated; no host packages or /etc files are changed.

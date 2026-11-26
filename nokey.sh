@@ -3,7 +3,7 @@
 
 # Constants and Configuration
 
-readonly SCRIPT_VERSION="2026.43"
+readonly SCRIPT_VERSION="2026.44"
 readonly LOG_FILE="nokey.log"
 readonly URL_FILE="nokey.url"
 readonly DEFAULT_DOMAIN="www.amd.com"
@@ -577,13 +577,123 @@ extract_private_key_from_x25519_output() {
     '
 }
 
+find_utf8_locale() {
+    local candidate="" charmap=""
+    command -v locale >/dev/null 2>&1 || return 1
+    while IFS= read -r candidate; do
+        # Only accept locale identifiers safe for the persistent shell settings.
+        [[ -n "$candidate" && "$candidate" != *[!a-zA-Z0-9_.@-]* ]] || continue
+        charmap="$(env LC_ALL="$candidate" LANG="$candidate" locale charmap 2>&1)" || continue
+        case "$charmap" in
+            UTF-8|UTF8) printf '%s\n' "$candidate"; return 0 ;;
+        esac
+    done < <(
+        printf '%s\n' "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" "${LANG:-}" \
+            C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8
+        env LC_ALL=C locale -a 2>/dev/null | awk 'tolower($0) ~ /utf-?8/ { print }'
+    )
+    return 1
+}
+
+install_locale_support() {
+    local os_version="${VERSION_ID:-}"
+    case "${manager:-}" in
+        apt) run_logged locale_install env DEBIAN_FRONTEND=noninteractive apt install -y locales ;;
+        apk) run_logged locale_install apk add --no-cache musl-locales ;;
+        yum|dnf)
+            if [[ "${os_version%%.*}" == 7 ]]; then
+                run_logged locale_install "$manager" install -y glibc-common
+            else
+                run_logged locale_install "$manager" install -y glibc-langpack-en
+            fi
+            ;;
+        pacman) run_logged locale_install pacman -S --noconfirm glibc ;;
+        zypper) run_logged locale_install zypper install -y glibc-locale-base ;;
+        xbps-install) run_logged locale_install xbps-install -Sy glibc-locales ;;
+        *) error "无法安装locale / Cannot install locale support: unknown package manager"; return 1 ;;
+    esac
+}
+
+# Optional root is for isolated filesystem verification; production uses /etc.
+persist_utf8_locale() {
+    local selected="$1" config_root="${2:-/etc}" defaults="" target="" staged=""
+    [[ -n "$selected" && "$selected" != *[!a-zA-Z0-9_.@-]* ]] || return 1
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *" debian "*|*" ubuntu "*) defaults="${config_root}/default/locale" ;;
+        *) defaults="${config_root}/locale.conf" ;;
+    esac
+    # New Debian uses a compatibility link, including in minimal chroots where
+    # its locale.conf target may not exist yet. Preserve that standard link.
+    if [[ "$defaults" == "${config_root}/default/locale" ]]; then
+        if [[ -L "$defaults" ]]; then
+            case "$(readlink "$defaults")" in
+                /etc/locale.conf|../locale.conf|"${config_root}/locale.conf") defaults="${config_root}/locale.conf" ;;
+                *) return 1 ;;
+            esac
+        elif [[ -f "${config_root}/locale.conf" ]]; then
+            defaults="${config_root}/locale.conf"
+        fi
+    fi
+    for target in "$defaults" "${config_root}/profile.d/nokey-locale.sh"; do
+        [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] || return 1
+        mkdir -p "$(dirname "$target")" || return 1
+        staged="$(mktemp "${target}.stage.XXXXXX")" || return 1
+        if [[ "$target" == "$defaults" ]]; then
+            if [[ -f "$target" ]] && ! awk '
+                !/^[[:space:]]*(export[[:space:]]+)?(LANG|LC_CTYPE|LC_ALL)[[:space:]]*=/
+            ' "$target" > "$staged"; then
+                rm -f "$staged"; return 1
+            fi
+            if ! printf 'LANG=%s\nLC_CTYPE=%s\n' "$selected" "$selected" >> "$staged"; then
+                rm -f "$staged"; return 1
+            fi
+        else
+            if ! printf '# Managed by nokey: UTF-8 node names\nexport LANG=%s\nexport LC_CTYPE=%s\nunset LC_ALL\n' \
+                "$selected" "$selected" > "$staged"; then
+                rm -f "$staged"; return 1
+            fi
+        fi
+        if ! chmod 644 "$staged" || ! mv -f "$staged" "$target"; then
+            rm -f "$staged"; return 1
+        fi
+    done
+}
+
+ensure_utf8_locale() {
+    local selected=""
+    task_start "检查UTF-8语言环境 / Check UTF-8 locale"
+    selected="$(find_utf8_locale)" || selected=""
+    if [[ -z "$selected" ]]; then
+        install_locale_support || { task_fail; return 1; }
+        selected="$(find_utf8_locale)" || selected=""
+        if [[ -z "$selected" ]] && command -v localedef >/dev/null 2>&1; then
+            # Compile one locale, without rebuilding a potentially large archive.
+            run_logged locale_generate localedef --no-archive -i en_US -f UTF-8 en_US.UTF-8 || { task_fail; return 1; }
+            selected="$(find_utf8_locale)" || selected=""
+        fi
+    fi
+    if [[ -z "$selected" ]]; then
+        task_fail
+        error "UTF-8 locale不可用 / No usable UTF-8 locale after installation."
+        return 1
+    fi
+    if ! persist_utf8_locale "$selected"; then
+        task_fail
+        error "保存UTF-8语言环境失败 / Failed to persist UTF-8 locale."
+        return 1
+    fi
+    export LANG="$selected" LC_CTYPE="$selected" LC_ALL="$selected"
+    log_info "event=locale_ready locale=$selected charmap=UTF-8"
+    task_done
+}
+
 install_dependencies() {
 
     task_start "开始准备工作 / Starting Preparation"
 
     #todo: "qrencode" should be a flag controlled feature
     # Callers may request mode-specific tools (for example jq for atomic JSON patches).
-    local tools=("curl" "netstat" "$@")
+    local tools=("curl" "netstat" "jq" "$@")
 
     if [[ -z "${manager:-}" ]]; then
         for candidate in apt yum dnf pacman apk zypper xbps-install; do
@@ -605,7 +715,7 @@ install_dependencies() {
     # Check for missing tools
     for tool in "${tools[@]}"; do
         if ! command -v "$tool" > /dev/null 2>&1; then
-            info "缺少$tool，正在安装 / $tool is missing, attempting to install."
+            info "缺少${tool}，正在安装 / $tool is missing, attempting to install."
             # Map binary names to package names if different
             local package_name="$tool"
             case "$tool" in
@@ -623,7 +733,7 @@ install_dependencies() {
             run_logged dependency_install eval "$install_cmd" "$package_name" || { task_fail; return 1; }
             if ! command -v "$tool" > /dev/null 2>&1; then
                 task_fail
-                error "安装$tool失败，请手动安装后重新运行脚本 / Failed to install '$tool'. Please install it manually and re-run the script."
+                error "安装${tool}失败，请手动安装后重新运行脚本 / Failed to install '$tool'. Please install it manually and re-run the script."
                 exit 1
             fi
         fi
@@ -631,6 +741,9 @@ install_dependencies() {
 
     task_done
 
+    if [[ "$realm_only" -ne 1 ]]; then
+        ensure_utf8_locale || return 1
+    fi
 }
 
 initialize_ip_from_netstack() {
